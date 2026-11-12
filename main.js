@@ -61,7 +61,7 @@ function depthModelStatus(model) {
 }
 function httpsGet(url, onData) {
   return new Promise((resolve, reject) => {
-    https.get(url, { headers: { 'User-Agent': 'Pulse-Suite/0.2.4' } }, (res) => {
+    https.get(url, { headers: { 'User-Agent': 'Pulse-Suite/0.2.5' } }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
         resolve(httpsGet(res.headers.location, onData));
         return;

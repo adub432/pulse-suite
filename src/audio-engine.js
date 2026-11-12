@@ -1,6 +1,6 @@
 'use strict';
 /* ==========================================================================
-   THE single shared audio engine — Pulse Suite v0.2.4
+   THE single shared audio engine — Pulse Suite v0.2.5
    --------------------------------------------------------------------------
    One AudioContext, one analyser chain, ONE audible source at a time.
    Every tab reads from this engine; no tab owns a player of its own.
@@ -18,6 +18,17 @@
    same analyser, so it can never double up with a loaded file either.
    The engine operates on the app's shared `state` object so the render
    loop and every consumer keep reading `state.*` exactly as before.
+   v0.2.5 — the 0.2.4 bug: play() called audioCtx.resume() without
+   awaiting it, then started a source and set playing=true even when the
+   context stayed suspended (no user gesture left by the end of the long
+   load chain, or the OS audio device unavailable). The app claimed to
+   play while the clock sat frozen at 0:00 and nothing sounded. Now
+   play() awaits resume() and verifies state === 'running' BEFORE it
+   starts anything or claims to play; if the context will not run it
+   pauses cleanly, remembers the user wanted to play, and shows a
+   visible "Audio is blocked" message instead of failing silently. A
+   statechange listener recovers automatically when the device comes
+   back, and load errors are reported instead of swallowed.
    ========================================================================== */
 function createAudioEngine(state, hooks) {
   const videoEl = () => document.getElementById('play-video');
@@ -33,6 +44,26 @@ function createAudioEngine(state, hooks) {
       if (state.audioCtx) return;
       state.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       this._contexts++;
+      // v0.2.5: watch the context's own state. If the OS takes the audio
+      // device away mid-playback the context goes 'suspended'/'interrupted'
+      // and the clock freezes — the app must stop claiming to play, say so,
+      // and recover automatically when the device comes back instead of
+      // sitting on a frozen 0:00 forever (the 0.2.4 bug).
+      state.audioCtx.addEventListener('statechange', () => {
+        const st = state.audioCtx.state;
+        if (st === 'running') {
+          if (state.audioBlocked) {
+            state.audioBlocked = false;
+            if (hooks.onAudioUnblocked) hooks.onAudioUnblocked();
+          }
+          if (state._wantedPlaying && state.buffer && !state.playing && !state.sysAudio && !state.videoMode) {
+            state._wantedPlaying = false;
+            this.play();
+          }
+        } else if ((st === 'suspended' || st === 'interrupted') && state.playing) {
+          this._blocked('Audio is blocked (' + st + ') — check your speakers / headphones, then click Play again.');
+        }
+      });
       state.analyser = state.audioCtx.createAnalyser();
       state.analyser.fftSize = 2048;
       state.analyser.smoothingTimeConstant = 0.82;
@@ -93,28 +124,80 @@ function createAudioEngine(state, hooks) {
     },
 
     /* ---------- transport: idempotent, orphan-proof ---------- */
-    play() {
+    // v0.2.5: resume() is async and can silently fail (no user gesture
+    // left after a long load chain, or the OS audio device is gone).
+    // Never start a source — and never claim to play — until the context
+    // is verifiably 'running'. The race against a timeout keeps a dead
+    // device from hanging play() forever.
+    async _ensureRunning() {
       this.ensureCtx();
-      state.audioCtx.resume();
-      if (state.sysAudio) { state.playing = true; if (hooks.onPlayState) hooks.onPlayState(true); return; }
-      if (state.videoMode) {
-        const v = videoEl();
-        v.play().catch(() => {});
+      const ctx = state.audioCtx;
+      if (ctx.state === 'running') return true;
+      try {
+        await Promise.race([
+          ctx.resume(),
+          new Promise((res) => setTimeout(res, 1500))
+        ]);
+      } catch (_) { /* resume rejected — fall through to the state check */ }
+      return ctx.state === 'running';
+    },
+    // The context will not run: stop claiming to play, keep the position,
+    // remember the user wanted to play (auto-recover on statechange),
+    // and show a visible message — never fail silently again.
+    _blocked(message) {
+      this.stopSource();
+      state.offset = this.currentTime();
+      state.playing = false;
+      state.audioBlocked = true;
+      state._wantedPlaying = true;
+      if (hooks.onPlayState) hooks.onPlayState(false);
+      if (hooks.onAudioBlocked) hooks.onAudioBlocked(message);
+    },
+    async play() {
+      // Serialize concurrent play() calls (triple-clicks, load tail +
+      // statechange recovery) so only one source is ever created.
+      if (this._playInFlight) return this._playInFlight;
+      this._playInFlight = (async () => {
+        this.ensureCtx();
+        // v0.2.5 (0.2.4 bug): resume FIRST, verify it worked, and only
+        // then start a source and set playing. A source started on a
+        // suspended context never sounds and the clock never moves.
+        if (!(await this._ensureRunning())) {
+          this._blocked('Audio is blocked (' + state.audioCtx.state + ') — check your speakers / headphones, then click Play again.');
+          return false;
+        }
+        state.audioBlocked = false;
+        state._wantedPlaying = false;
+        if (state.sysAudio) { state.playing = true; if (hooks.onPlayState) hooks.onPlayState(true); return true; }
+        if (state.videoMode) {
+          const v = videoEl();
+          try {
+            await v.play();
+          } catch (_) {
+            this._blocked('Video could not play — the file may be damaged or in an unsupported format.');
+            return false;
+          }
+          state.playing = true;
+          if (hooks.onPlayState) hooks.onPlayState(true);
+          return true;
+        }
+        if (!state.buffer) return false;
+        // Already playing with a live source on a RUNNING context?
+        // Never start a second one — the source keeps sounding.
+        if (state.playing && state.source) return true;
+        this.stopSource(); // orphan guard: no stale source survives a play()
+        state.source = this.makeSource();
+        state.startedAt = state.audioCtx.currentTime;
+        state.source.start(0, state.offset);
         state.playing = true;
         if (hooks.onPlayState) hooks.onPlayState(true);
-        return;
-      }
-      if (!state.buffer) return;
-      // Already playing with a live source? Never start a second one.
-      if (state.playing && state.source) return;
-      this.stopSource(); // orphan guard: no stale source survives a play()
-      state.source = this.makeSource();
-      state.startedAt = state.audioCtx.currentTime;
-      state.source.start(0, state.offset);
-      state.playing = true;
-      if (hooks.onPlayState) hooks.onPlayState(true);
+        return true;
+      })();
+      try { return await this._playInFlight; }
+      finally { this._playInFlight = null; }
     },
     pause() {
+      state._wantedPlaying = false;
       if (state.sysAudio) { state.playing = false; if (hooks.onPlayState) hooks.onPlayState(false); return; }
       if (state.videoMode) {
         const v = videoEl();
@@ -129,8 +212,8 @@ function createAudioEngine(state, hooks) {
       state.playing = false;
       if (hooks.onPlayState) hooks.onPlayState(false);
     },
-    toggle() { state.playing ? this.pause() : this.play(); },
-    seekTo(t) {
+    async toggle() { if (state.playing) this.pause(); else await this.play(); },
+    async seekTo(t) {
       if (state.sysAudio) return;
       if (state.videoMode) {
         const v = videoEl();
@@ -143,6 +226,12 @@ function createAudioEngine(state, hooks) {
       if (wasPlaying) this.stopSource();
       state.offset = Math.max(0, Math.min(state.duration, t));
       if (wasPlaying) {
+        // v0.2.5: do not restart a source on a context that will not run.
+        if (!(await this._ensureRunning())) {
+          this._blocked('Audio is blocked (' + state.audioCtx.state + ') — check your speakers / headphones, then click Play again.');
+          if (hooks.onSeek) hooks.onSeek(state.offset);
+          return;
+        }
         state.source = this.makeSource();
         state.startedAt = state.audioCtx.currentTime;
         state.source.start(0, state.offset);
@@ -163,6 +252,10 @@ function createAudioEngine(state, hooks) {
       if (v) { try { v.pause(); } catch (_) {} }
       this.stopSystemAudio(true);
       state.playing = false;
+      // A new load supersedes any earlier intent to play / blocked state;
+      // the load's own play() at the tail sets them fresh.
+      state._wantedPlaying = false;
+      state.audioBlocked = false;
       if (hooks.onPlayState) hooks.onPlayState(false);
     },
 
@@ -175,9 +268,22 @@ function createAudioEngine(state, hooks) {
       const v = videoEl();
       if (v) { v.removeAttribute('src'); v.load(); v.classList.add('hidden'); }
       state.videoMode = false;
-      const bytes = await window.pulse.readFile(filePath);
+      // v0.2.5: a file that cannot be read or decoded used to reject with
+      // nothing shown anywhere — the track just never appeared and play
+      // did nothing. Report it in the player instead.
+      let bytes;
+      try { bytes = await window.pulse.readFile(filePath); }
+      catch (e) {
+        if (gen === this._gen && hooks.onLoadError) hooks.onLoadError(name, 'could not read the file (' + (e && e.message ? e.message : e) + ')');
+        return null;
+      }
       if (gen !== this._gen) return null; // superseded — never install, never play
-      const buf = await state.audioCtx.decodeAudioData(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+      let buf;
+      try { buf = await state.audioCtx.decodeAudioData(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)); }
+      catch (e) {
+        if (gen === this._gen && hooks.onLoadError) hooks.onLoadError(name, 'could not be decoded — try MP3, WAV, FLAC, OGG or M4A');
+        return null;
+      }
       if (gen !== this._gen) return null;
       state.source = null; state.buffer = buf; state.duration = buf.duration;
       state.offset = 0; state.playing = false; state.particles = [];
@@ -190,7 +296,7 @@ function createAudioEngine(state, hooks) {
       if (hooks.onTrackLoaded) await hooks.onTrackLoaded({ kind: 'audio', name, path: filePath });
       if (gen !== this._gen) return null;
       if (hooks.onTrackChanged) hooks.onTrackChanged();
-      this.play();
+      await this.play();
       return { buffer: buf, det };
     },
     async loadVideo(filePath, name) {
@@ -205,6 +311,13 @@ function createAudioEngine(state, hooks) {
       this.ensureVideoSource();
       await new Promise((res) => { v.onloadedmetadata = res; v.onerror = res; });
       if (gen !== this._gen) { try { v.pause(); } catch (_) {} return null; }
+      // v0.2.5: a video that fails to load used to install with duration 0
+      // and then "play" silently. Say so instead.
+      if (!v.duration || !isFinite(v.duration)) {
+        state.videoMode = false;
+        if (hooks.onLoadError) hooks.onLoadError(name, 'could not be loaded — try MP4, WebM, MOV or MKV');
+        return null;
+      }
       state.duration = v.duration || 0;
       state.offset = 0; state.bpm = 0; state.lastBeats = { bpm: 0, onsets: [], beatTimes: [] };
       hooks.resetAnalysis(0);
@@ -212,7 +325,7 @@ function createAudioEngine(state, hooks) {
       if (hooks.onTrackLoaded) await hooks.onTrackLoaded({ kind: 'video', name, path: filePath });
       if (gen !== this._gen) return null;
       if (hooks.onTrackChanged) hooks.onTrackChanged();
-      this.play();
+      await this.play();
       return { duration: state.duration };
     },
 
@@ -245,6 +358,16 @@ function createAudioEngine(state, hooks) {
         state.sysStream = stream;
         state.sysSource = state.audioCtx.createMediaStreamSource(stream);
         state.sysSource.connect(state.analyser);
+        // v0.2.5: same rule as file playback — do not claim to listen on
+        // a context that will not run.
+        if (!(await this._ensureRunning())) {
+          try { state.sysSource.disconnect(); } catch (_) {}
+          state.sysSource = null;
+          state.sysStream.getTracks().forEach((t) => t.stop());
+          state.sysStream = null;
+          if (hooks.onAudioBlocked) hooks.onAudioBlocked('Audio is blocked (' + state.audioCtx.state + ') — check your speakers / headphones, then try system audio again.');
+          return false;
+        }
         state.gain.gain.value = 0; // analyse only — don't double the audio through the speakers
         state.sysAudio = true; state.playing = true;
         state.sysStartedAt = state.audioCtx.currentTime;
@@ -281,7 +404,11 @@ function createAudioEngine(state, hooks) {
         videoMode: state.videoMode,
         trackName: state.trackName,
         position: this.currentTime(),
-        duration: state.duration
+        duration: state.duration,
+        // v0.2.5: the context's own state is the 0.2.4 diagnosis — a
+        // 'suspended'/'interrupted' context freezes the clock at 0:00.
+        contextState: state.audioCtx ? state.audioCtx.state : 'none',
+        audioBlocked: !!state.audioBlocked
       };
     }
   };

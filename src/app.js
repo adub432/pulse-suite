@@ -239,7 +239,7 @@ function resize() {
 window.addEventListener('resize', resize);
 resize();
 
-/* ---------- the one shared audio engine (v0.2.4) ----------
+/* ---------- the one shared audio engine (v0.2.5) ----------
    src/audio-engine.js owns the transport: one AudioContext, one analyser
    chain, one audible source at a time. These wrappers keep the old call
    sites working — every tab calls play()/pause()/seekTo()/currentTime()
@@ -251,6 +251,13 @@ const engine = createAudioEngine(state, {
   updateSysAudioUI,
   onContextReady: () => { analysis = createAnalysis(state.audioCtx.sampleRate); },
   onPlayState: (playing) => { $('btn-play').innerHTML = playing ? SVG_PAUSE : SVG_PLAY; },
+  // v0.2.5: the engine never fails silently any more — blocked audio and
+  // failed loads both say so in the player status line.
+  onAudioBlocked: (message) => { $('play-status-text').textContent = '⚠ ' + message; },
+  onAudioUnblocked: () => {
+    if (state.trackName) $('play-status-text').textContent = `${state.playing ? '▶' : '❚❚'} ${state.trackName} — ${fmt(state.duration)}${state.bpm ? ` · ~${state.bpm} BPM` : ''}`;
+  },
+  onLoadError: (name, reason) => { $('play-status-text').textContent = `✕ Couldn't load "${name}" — ${reason}`; },
   onSeek: (t) => {
     if (state.duration) $('seek').value = Math.floor(1000 * t / state.duration);
     $('time-current').textContent = fmt(t);
@@ -301,6 +308,18 @@ window.__pulseAudio = engine; // smoke-test handle: engine.debug()
 function play() { engine.play(); }
 function pause() { engine.pause(); }
 function togglePlay() { engine.toggle(); }
+/* v0.2.5: wake the AudioContext synchronously inside the user gesture
+   that starts a load — before any await. By the end of the load chain
+   (read + decode + lyrics lookup) the gesture activation has expired,
+   so a resume() issued only at the tail silently fails and the context
+   stays suspended (the 0.2.4 bug). Call this first in pickMedia, the
+   drop handler, playAt and the Cut track picker. */
+function wakeAudio() {
+  engine.ensureCtx();
+  if (state.audioCtx) {
+    try { const p = state.audioCtx.resume(); if (p && p.catch) p.catch(() => {}); } catch (_) {}
+  }
+}
 function seekTo(t) { engine.seekTo(t); }
 function currentTime() { return engine.currentTime(); }
 function startSystemAudio() { return engine.startSystemAudio(); }
@@ -376,6 +395,7 @@ function renderPlaylist() {
   $('queue-count').textContent = state.playlist.length ? `(${state.playlist.length})` : '';
 }
 async function playAt(i) {
+  wakeAudio(); // v0.2.5: resume inside the click gesture, before the awaits
   if (i < 0 || i >= state.playlist.length) return;
   state.playIndex = i;
   const item = state.playlist[i];
@@ -533,6 +553,7 @@ async function loadMidiFile(filePath, name, silent) {
   }
 }
 async function pickMedia() {
+  wakeAudio(); // v0.2.5: resume inside the click gesture, before the dialog await
   const files = await window.pulse.openMedia();
   if (!files) return;
   const midis = files.filter((f) => kindOf(f.name) === 'midi');
@@ -3091,6 +3112,7 @@ async function cutLoadFolder() {
   updateCutButtons();
 }
 async function cutLoadTrack() {
+  wakeAudio(); // v0.2.5: resume inside the click gesture, before the dialog await
   // The shared track is already loaded? Use it — no file dialog needed.
   if (state.trackName && state.lastBeats) {
     cut.trackPath = state.trackPath; cut.trackName = state.trackName;
@@ -3191,7 +3213,7 @@ pairSliderNum('cut-bpc', 'cut-bpc-val');
 $('btn-cut-preview').addEventListener('click', toggleCutPreview);
 $('btn-cut-export').addEventListener('click', async () => {
   const data = {
-    app: 'Pulse Suite', version: '0.2.4', track: cut.trackName, bpm: cut.bpm,
+    app: 'Pulse Suite', version: '0.2.5', track: cut.trackName, bpm: cut.bpm,
     beatsPerClip: Number($('cut-bpc').value),
     segments: cut.sequence.map((s) => ({ clip: s.clip.name, path: s.clip.path, start: +s.start.toFixed(3), end: +s.end.toFixed(3) }))
   };
@@ -3928,6 +3950,7 @@ window.addEventListener('keydown', (e) => {
 window.addEventListener('dragover', (e) => e.preventDefault());
 window.addEventListener('drop', async (e) => {
   e.preventDefault();
+  wakeAudio(); // v0.2.5: resume inside the drop gesture, before the awaits
   const files = [...e.dataTransfer.files];
   const media = files.filter((f) => kindOf(f.name) === 'audio' || kindOf(f.name) === 'video');
   const imgs = files.filter((f) => kindOf(f.name) === 'image');
@@ -4146,6 +4169,41 @@ async function smokeTest() {
       || res.afterRace.liveSources !== 1 || res.raceTrack !== 'tone2.wav') R.ok = false;
     // Back to tone.wav for the later steps.
     await loadAudioFile('/tmp/pulse-test/tone.wav', 'tone.wav');
+    return res;
+  });
+  await step('audio-resume', async () => {
+    // v0.2.5: the 0.2.4 bug — a suspended AudioContext made play() claim
+    // to play (pause icon, playing=true) while the clock sat frozen at
+    // 0:00 and nothing sounded. play() must recover a suspended context
+    // instead of lying about it, and the clock must actually advance.
+    const dbg = () => window.__pulseAudio.debug();
+    const res = {};
+    // (1) Normal play: the context is really running and time advances.
+    await loadAudioFile('/tmp/pulse-test/tone.wav', 'tone.wav');
+    await new Promise((r) => setTimeout(r, 400));
+    res.contextState = dbg().contextState;
+    res.playing = dbg().playing;
+    const t0 = currentTime();
+    await new Promise((r) => setTimeout(r, 500));
+    res.positionAdvanced = +(currentTime() - t0).toFixed(2);
+    // (2) Suspend the context mid-playback (Austin's Windows symptom:
+    // pause icon, frozen clock, silence), then press play: it must
+    // recover to running, flip back to playing, and advance the clock —
+    // never sit on a frozen 0:00 claiming to play.
+    await state.audioCtx.suspend();
+    await new Promise((r) => setTimeout(r, 200));
+    res.suspendedState = dbg().contextState;
+    res.blockedWhileSuspended = dbg().playing === false && dbg().audioBlocked === true;
+    await play();
+    await new Promise((r) => setTimeout(r, 400));
+    res.afterResume = dbg();
+    const t1 = currentTime();
+    await new Promise((r) => setTimeout(r, 500));
+    res.resumedAdvance = +(currentTime() - t1).toFixed(2);
+    if (res.contextState !== 'running' || !res.playing || res.positionAdvanced <= 0
+      || res.suspendedState !== 'suspended' || !res.blockedWhileSuspended
+      || res.afterResume.contextState !== 'running' || !res.afterResume.playing
+      || res.resumedAdvance <= 0) R.ok = false;
     return res;
   });
   await step('fontfeatures', async () => {

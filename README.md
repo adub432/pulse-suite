@@ -1,11 +1,11 @@
-# Pulse Suite v0.2.4 — All-in-one media studio
+# Pulse Suite v0.2.5 — All-in-one media studio
 
 A desktop app for playing music, watching it drawn live, corrupting files at the
 byte level, turning video into ASCII, and cutting clips to the beat — all in one
 window, Photoshop/Darktable-style: one tab per stage of the workflow, all sharing
 a single media pipeline.
 
-Built for Austin, in the spirit of [Oto](https://otoinstrument.shop/en). **v0.2.4
+Built for Austin, in the spirit of [Oto](https://otoinstrument.shop/en). **v0.2.5
 is the fix-up build:** one shared audio engine (one track, one player — load
 once from Play and it carries to every tab, never doubles up), a global theme
 picker (Sky / Midnight / Sunset / Mono, applied app-wide from any tab and
@@ -145,7 +145,7 @@ theme-coloured scrollbar; text wraps or truncates instead of spilling out.
 - `src/index.html`, `src/styles.css`, `src/app.js` — the whole suite (Web Audio analysis + canvas rendering, no framework)
 - `src/analysis.js` — the live audio-analysis engine (Toaster port: beat/kick/bass/chords/key, timing hypotheses)
 - `src/codegen.js` — live Strudel code generation (Toaster port)
-- `src/audio-engine.js` — the single shared audio engine (v0.2.4): one AudioContext, one source, one analyser; load/play/pause/seek/system-audio all go through it (Material Web was removed in 0.2.4 — there is no `src/material.js` any more)
+- `src/audio-engine.js` — the single shared audio engine (v0.2.5): one AudioContext, one source, one analyser; load/play/pause/seek/system-audio all go through it (Material Web was removed in 0.2.4 — there is no `src/material.js` any more)
 - `src/ascii-styles.js` — the ASCII style library: palettes, dither algorithms, style renderers, post-effects stack, recipes
 - `src/depth.js` — renderer side of depth estimation (model status/download/estimate, heuristic fallback, depth masks)
 - `src/popout.html` + `src/popout.js` — the pop-out code-editor and hex-editor windows

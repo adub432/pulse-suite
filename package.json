@@ -50,5 +50,5 @@
     "dist:win": "electron-builder --win portable --x64",
     "start": "electron ."
   },
-  "version": "0.2.4"
+  "version": "0.2.5"
 }
