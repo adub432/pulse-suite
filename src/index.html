@@ -1,0 +1,729 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pulse Suite — All-in-one media studio</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body data-theme="sky">
+<div id="app">
+
+  <header id="tabbar">
+    <div class="brand">PULSE <span>SUITE</span> <em>v0.2.4</em></div>
+    <nav id="tabs" aria-label="Pulse Suite tabs — the pipeline, left to right: Play → Visualize → Glitch → ASCII → Cut → Cook" title="Pipeline: Play → Visualize → Glitch → ASCII → Cut → Cook">
+      <button class="paper-tab" data-tab="play" aria-label="Play tab">▶ Play</button>
+      <button class="paper-tab" data-tab="visualize" aria-label="Visualize tab">Visualize</button>
+      <button class="paper-tab" data-tab="glitch" aria-label="Glitch tab">Glitch</button>
+      <button class="paper-tab" data-tab="ascii" aria-label="ASCII tab">ASCII</button>
+      <button class="paper-tab" data-tab="cut" aria-label="Cut tab">Cut</button>
+      <button class="paper-tab" data-tab="cook" aria-label="Cook tab">🍳 Cook</button>
+      <button class="paper-tab" data-tab="mission" aria-label="Mission Control tab">Mission Control</button>
+    </nav>
+    <div class="tab-actions">
+      <span id="sysaudio-status" class="sys-status" title="System audio capture (Toaster-style: hear whatever is playing on your PC)">sys audio: off</span>
+      <span class="menu-anchor">
+        <button class="paper-btn" id="theme-button">
+          <span id="theme-label">Theme: Sky</span>
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M7 10l5 5 5-5z"/></svg>
+        </button>
+        <div class="paper-menu" id="theme-menu">
+          <button class="paper-menu-item" data-theme="sky">Sky</button>
+          <button class="paper-menu-item" data-theme="midnight">Midnight</button>
+          <button class="paper-menu-item" data-theme="sunset">Sunset</button>
+          <button class="paper-menu-item" data-theme="mono">Mono</button>
+        </div>
+      </span>
+      <button class="paper-btn" id="btn-palette" title="Command palette (Ctrl+K) — tabs, looks, listen, export…">⌘K</button>
+      <button class="paper-btn paper-btn-icon" id="btn-help" aria-label="Keyboard shortcuts">
+        <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm1 17h-2v-2h2v2zm2.1-7.4c-.6.6-1.1 1-1.1 1.9h-2c0-1.4.6-2.1 1.3-2.8.5-.5.7-.9.7-1.4 0-1-.8-1.8-1.9-1.8s-1.9.8-1.9 1.8H8.2c0-2.2 1.7-3.8 3.9-3.8s3.9 1.6 3.9 3.7c0 1-.5 1.8-1.9 2.4z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <main id="panels">
+
+    <!-- ============ PLAY (Mousiki port, with a mouse) ============
+         Mousiki's actual layout, top → bottom: metadata → progress →
+         search → LIBRARY | QUEUE | LYRICS → status. Mousiki is
+         keyboard-only (zero mouse handling in its source); this port keeps
+         its layout and behaviour and ADDS the mouse: clickable rows,
+         clickable seek, clickable transport, wheel-scrollable lists.
+         The tab never scrolls as a page — each panel scrolls inside its
+         own box, sized to the window like Mousiki's clamp_output_rows. -->
+    <section id="tab-play" class="panel active">
+      <div id="play-top">
+        <div id="now-playing">
+          <div id="np-title">No track loaded</div>
+          <div id="np-meta">Open audio or video — or press System Audio to hear whatever is playing on your PC.</div>
+        </div>
+        <div id="play-progress">
+          <span id="play-time-cur">0:00</span>
+          <input type="range" class="paper-range" id="play-seek" min="0" max="1000" value="0" step="1" aria-label="Seek">
+          <span id="play-time-total">0:00</span>
+          <span id="play-bpm" class="bpm"></span>
+        </div>
+      </div>
+      <div id="play-search">
+        <div class="pane-actions">
+          <button class="paper-btn paper-btn-primary" id="btn-add-media" title="Add files to queue (Ctrl+O)">Open Audio</button>
+          <button class="paper-btn" id="btn-add-folder" title="Add a whole folder">Folder</button>
+          <button class="paper-btn paper-btn-hot" id="btn-sysaudio" title="Listen to whatever is playing on your PC (like Toaster) — Spotify, YouTube, a game, anything">▶&nbsp; LISTEN TO MY PC</button>
+          <button class="paper-btn" id="btn-stop-sysaudio" disabled>Stop listening</button>
+          <span id="sysaudio-live" class="live-pill" hidden><i></i>LIVE</span>
+        </div>
+        <input id="play-filter" type="text" placeholder="/ filter — type to filter library + queue" spellcheck="false" autocomplete="off">
+        <span id="sysaudio-msg" class="sys-msg"></span>
+      </div>
+      <div id="sysaudio-empty" class="sys-empty">No track loaded — press <b>LISTEN TO MY PC</b> and play anything on your PC. The visuals, the ASCII cam and the code panel will all follow it.</div>
+      <div id="play-viz">
+        <video id="play-video" class="hidden" muted playsinline></video>
+        <canvas id="play-spectrum" height="140"></canvas>
+        <canvas id="play-waveform" height="90"></canvas>
+      </div>
+      <div id="play-panels">
+        <aside id="library-pane" class="pane">
+          <div class="pane-title">LIBRARY <span id="library-count" class="sys-msg"></span></div>
+          <div class="pane-actions">
+            <button class="paper-btn" id="btn-library-folder">Browse folder…</button>
+            <span id="library-path" class="sys-msg"></span>
+          </div>
+          <ol id="library-list"></ol>
+          <div class="pane-note">Click a track to play it · ↑/↓ move · a = add to queue</div>
+        </aside>
+        <aside id="playlist-pane" class="pane">
+          <div class="pane-title">QUEUE <span id="queue-count"></span></div>
+          <div class="pane-actions">
+            <button class="paper-btn" id="btn-shuffle" aria-pressed="false" title="Shuffle (m)">Shuffle</button>
+            <button class="paper-btn" id="btn-repeat" aria-pressed="false" title="Repeat (r)">Repeat: off</button>
+          </div>
+          <ol id="playlist"></ol>
+          <div class="pane-note">Keyboard: ↑/↓ move · Enter play · n/b next/prev · p play/pause · / filter</div>
+        </aside>
+        <aside id="lyrics-pane" class="pane">
+          <div class="pane-title">LYRICS <span id="lyrics-src"></span></div>
+          <div id="lyrics">No synced lyrics — drop a <b>.lrc</b> file next to the track (same name) and it will light up line by line as it plays.</div>
+        </aside>
+      </div>
+      <div id="play-status" class="status-line">
+        <span id="play-status-text">No track — open audio or listen to your PC.</span>
+        <span class="status-keys">p play · n/b next/prev · m shuffle · r repeat · / filter · TAB panels</span>
+      </div>
+    </section>
+
+    <!-- ============ VISUALIZE — Toaster-model live-code stage (v0.2.3) ============
+         TUI layout (Mousiki model): SCENES rail left, stage centre, EFFECT
+         LAYERS right, LIVE CODE bottom, status bar across the top. Every
+         keyboard shortcut has a clickable twin — TUI with a mouse. -->
+    <section id="tab-visualize" class="panel">
+      <canvas id="canvas"></canvas>
+      <div id="empty" class="overlay">
+        <div class="logo">PULSE</div>
+        <p class="tag">Drop a track in — or press <b>Open Audio</b> — and watch it drawn live.</p>
+        <p class="hint">MP3 · WAV · FLAC · OGG · M4A · AIFF &nbsp;·&nbsp; add the matching <b>.mid</b> file for the piano roll</p>
+        <button class="paper-btn paper-btn-primary" id="btn-open-empty">Open Audio</button>
+      </div>
+      <!-- Toaster's top bar: status, app name, then the controls — source,
+           scenes, layers, card, cam, rec, strudel, present, help. The code
+           IS the main content here (see #code-panel, left column over the
+           canvas); the bar is how you steer it. -->
+      <div id="viz-status" class="toaster-bar">
+        <span id="viz-status-tag" class="status-tag">○ idle</span>
+        <span class="appname">pulse · visualize</span>
+        <button class="paper-btn" id="btn-viz-source" title="Audio source (S)">source ▾</button>
+        <button class="paper-btn" id="btn-viz-scenes" title="Scenes (V)">scenes ▾</button>
+        <span id="viz-status-track">—</span><span class="status-sep">│</span><span id="viz-layers"></span>
+        <span class="spacer"></span>
+        <button class="paper-btn" id="btn-viz-layers" title="Effect layers">layers</button>
+        <button class="paper-btn" id="btn-viz-card" title="Now-playing card (N)">card</button>
+        <button class="paper-btn" id="btn-viz-cam" title="ASCII camera (C)">cam</button>
+        <button class="paper-btn" id="btn-viz-rec" title="Record video (M)">● rec</button>
+        <button class="paper-btn" id="btn-viz-strudel" title="Open this code in Strudel (O)">strudel ↗</button>
+        <button class="paper-btn" id="btn-viz-export" title="Snapshot the current frame as a PNG (Ctrl+S)">⬇ PNG</button>
+        <button class="paper-btn" id="btn-present" title="Presentation mode — full-bleed canvas, no chrome (F)">present</button>
+        <button class="paper-btn" id="btn-viz-help" title="Keys and how it works (?)">?</button>
+      </div>
+      <!-- Source menu (Toaster's S key): what the engine listens to. -->
+      <div id="viz-source-menu" class="paper-menu" hidden>
+        <button class="paper-menu-item" id="btn-open-audio">Open audio / video…</button>
+        <button class="paper-menu-item" id="btn-viz-src-sys">▶ Listen to my PC (system audio)</button>
+        <button class="paper-menu-item" id="btn-viz-src-stop">Stop listening</button>
+        <button class="paper-menu-item" id="btn-open-midi">Open MIDI…</button>
+      </div>
+      <!-- Now-playing card (Toaster's N key): the song as an ID card. -->
+      <div id="viz-card" class="viz-card" hidden>
+        <div class="viz-card-title" id="viz-card-title">No track</div>
+        <div class="viz-card-meta" id="viz-card-meta">—</div>
+        <div class="viz-card-meta" id="viz-card-scene">—</div>
+      </div>
+      <!-- SCENES menu (Toaster's V key): the scene list lives here now, not
+           in a permanent rail — the code is the hero of this tab. -->
+      <nav id="lookbar" class="paper-menu scenes-menu" aria-label="Scenes" hidden>
+        <div class="rail-head">┌─ SCENES ────────┐</div>
+        <div class="rail-group">├─ PULSE ─┤</div>
+        <button class="look-chip" data-look="spectrum" data-active="false">Spectrum</button>
+        <button class="look-chip" data-look="scope" data-active="false">Scope</button>
+        <button class="look-chip" data-look="orbit" data-active="false">Orbit</button>
+        <button class="look-chip" data-look="roll" data-active="false">Piano Roll</button>
+        <button class="look-chip" data-look="fountain" data-active="false">Fountain</button>
+        <button class="look-chip" data-look="pattern" data-active="false">Pattern</button>
+        <button class="look-chip" data-look="studio" data-active="true">Studio</button>
+        <button class="look-chip" data-look="geometric" data-active="false">Geometric</button>
+        <button class="look-chip" data-look="dither" data-active="false">Dither</button>
+        <button class="look-chip" data-look="depth" data-active="false">Depth</button>
+        <div class="rail-group">├─ TOASTER ─┤</div>
+        <button class="look-chip" data-look="ascii" data-active="false">ASCII</button>
+        <button class="look-chip" data-look="mesh" data-active="false">Mesh</button>
+        <button class="look-chip" data-look="glitch" data-active="false">Glitch</button>
+        <div class="rail-foot">└ 1–9,0 = PULSE ─┘</div>
+      </nav>
+      <!-- Look options: shown only for looks that have presets (Geometric / Dither / ASCII / Mesh).
+           Grouped preset dropdowns with a plain-English description (Dithr pattern). -->
+      <div id="look-options" class="glass-row" hidden>
+        <label id="geo-opt" hidden>GEOMETRIC PRESET
+          <select id="geo-preset">
+            <optgroup label="Shapes">
+              <option value="triangles" selected>Triangles — sharp riso-glyph grid</option>
+              <option value="circles">Circles — soft dot field, kick swells</option>
+              <option value="squares">Squares — chunky mosaic blocks</option>
+              <option value="lines">Lines — hatching that leans with the bass</option>
+              <option value="mixed">Mixed — triangles, circles and squares together</option>
+            </optgroup>
+            <optgroup label="Density">
+              <option value="sparse">Sparse — few big shapes, lots of air</option>
+              <option value="dense">Dense — tight field, almost a texture</option>
+            </optgroup>
+          </select>
+        </label>
+        <label id="dither-opt" hidden>DITHER FIELD
+          <select id="dither-field">
+            <optgroup label="Organic">
+              <option value="smoke" selected>Smoke — slow drifting clouds</option>
+              <option value="caustics">Caustics — rippling light on water</option>
+              <option value="cellular">Cellular — growing blobs, like cells</option>
+            </optgroup>
+            <optgroup label="Geometric">
+              <option value="spiral">Spiral — a vortex that spins with the beat</option>
+              <option value="tunnel">Tunnel — flying down a corridor</option>
+              <option value="moire">Moiré — two grids sliding past each other</option>
+            </optgroup>
+            <optgroup label="Retro">
+              <option value="halftone">Halftone — old print dots, big and proud</option>
+              <option value="starfield">Starfield — drifting stars, bass makes them flare</option>
+            </optgroup>
+          </select>
+        </label>
+        <label id="ascii-scene-opt" hidden>ASCII STYLE
+          <select id="ascii-scene-style">
+            <optgroup label="Character">
+              <option value="halftone" selected>Halftone — print dots, PICO-8 ink</option>
+              <option value="ascii">ASCII — classic character ramp</option>
+              <option value="braille">Braille — dense dot matrix</option>
+            </optgroup>
+            <optgroup label="Colour">
+              <option value="gameboy">Game Boy — four greens</option>
+              <option value="pico8">PICO-8 — 16 colours</option>
+            </optgroup>
+          </select>
+        </label>
+        <label id="mesh-scene-opt" hidden>MESH PALETTE
+          <select id="mesh-scene-palette">
+            <option value="aurora" selected>Aurora — teal / violet / pink</option>
+            <option value="sunset">Sunset — ember / magenta</option>
+            <option value="ultraviolet">Ultraviolet — deep violet / blue</option>
+            <option value="candy">Candy — hot pink / amber / sky</option>
+            <option value="mono">Mono — greys</option>
+          </select>
+        </label>
+        <span id="look-desc" class="look-desc"></span>
+        <button class="paper-btn" id="btn-randomize-look" title="Randomize this look's preset">🎲 Randomize</button>
+      </div>
+      <!-- (viz-actions folded into the Toaster bar above: source, export, present) -->
+      <!-- EFFECT LAYERS — the Alembic Shader Lab model: stackable layers, add /
+           reorder / tune / save as a preset. Layers run over the look above. -->
+      <div id="layers-panel" class="glass-panel">
+        <div class="layers-head">
+          <span class="pane-title">┌─ EFFECT LAYERS <span id="layers-count" class="sys-msg"></span></span>
+          <span class="layers-presets">
+            <select id="layer-preset" title="Layer stack presets">
+              <optgroup label="Built-in">
+                <option value="">— No preset —</option>
+                <option value="clean">Clean — no layers</option>
+                <option value="crt-night">CRT Night — scanlines + CRT/VHS + grain</option>
+                <option value="neon-grid">Neon Grid — mesh gradient + glow + halftone</option>
+                <option value="riso-print">Riso Print — gradient map + dither + grain</option>
+                <option value="mesh-dream">Mesh Dream — mesh gradient + vignette</option>
+              </optgroup>
+              <optgroup label="My presets" id="layer-preset-mine"></optgroup>
+            </select>
+            <input id="layer-preset-name" type="text" placeholder="Preset name…" size="12">
+            <button class="paper-btn" id="btn-layer-save-preset">Save stack</button>
+            <button class="paper-btn" id="btn-layer-randomize" title="Randomize the whole stack">🎲 Randomize</button>
+          </span>
+        </div>
+        <ol id="layers-list"></ol>
+        <div id="layers-empty" class="sys-msg">No layers — the look plays clean. Add one to bend it.</div>
+        <div class="pane-actions">
+          <button class="paper-btn paper-btn-primary" id="btn-layer-add">＋ Add layer…</button>
+          <span id="layer-hint" class="sys-msg">Layers run top to bottom. Mesh Gradient draws behind the look; everything else runs after it.</span>
+        </div>
+        <div id="layer-params" class="layer-params" hidden>
+          <div class="pane-title">LAYER — <span id="layer-params-name"></span></div>
+          <div id="layer-params-rows"></div>
+          <label class="blend-row">Blend
+            <select id="layer-blend">
+              <option value="source-over">Normal — paints over what's below</option>
+              <option value="screen">Screen — lightens, like projecting two slides</option>
+              <option value="overlay">Overlay — punches contrast, keeps the mid-tones</option>
+              <option value="multiply">Multiply — darkens, like ink over ink</option>
+              <option value="lighten">Lighten — keeps only the brighter of the two</option>
+            </select>
+          </label>
+          <div id="layer-blend-desc" class="sys-msg"></div>
+          <label class="check-row" id="mesh-edit-row" hidden><input type="checkbox" class="paper-switch" id="mesh-edit"> Drag colour nodes on the canvas (mmeshy-style)</label>
+        </div>
+      </div>
+      <div id="present-strip" class="present-strip" hidden>
+        <span id="present-info"></span>
+        <span class="present-keys">SPACE play · 1–9 looks · F exit</span>
+      </div>
+      <div id="code-panel">
+        <div class="code-head">
+          <span class="code-title">┌─ LIVE CODE <span id="code-status">— waiting for sound</span></span>
+          <span class="code-actions">
+            <button class="paper-btn paper-btn-text" id="btn-code-copy">Copy</button>
+            <button class="paper-btn paper-btn-text" id="btn-code-strudel">Open in Strudel ↗</button>
+            <button class="paper-btn paper-btn-text" id="btn-code-popout" title="Pop out the live code editor into its own window (Ctrl+Shift+C)">⧉ Pop out</button>
+            <button class="paper-btn paper-btn-text" id="btn-code-toggle">Hide</button>
+          </span>
+        </div>
+        <pre id="code-lines">// The engine is listening — play a track or press LISTEN TO MY PC and it
+// will write what it hears as live Strudel code, bar by bar.</pre>
+      </div>
+    </section>
+
+    <!-- ============ GLITCH (real byte-level corruption + hex editor + shader lab) ============ -->
+    <section id="tab-glitch" class="panel">
+      <div id="glitch-left" class="pane">
+        <div class="pane-title">HEX EDITOR — <span id="glitch-file">no file loaded</span></div>
+        <div class="pane-actions">
+          <button class="paper-btn paper-btn-primary" id="btn-glitch-open">Open file to corrupt</button>
+          <button class="paper-btn" id="btn-hex-popout" title="Pop out the hex editor into its own window (Ctrl+Shift+H)">⧉ Pop out hex</button>
+          <span id="glitch-format" class="fmt"></span>
+        </div>
+        <div id="glitch-format-note" class="fmt-note"></div>
+        <label class="check-row"><input type="checkbox" class="paper-switch" id="glitch-audio-corrupt"> AUDIO CORRUPT — corrupt a few bytes on every kick while audio plays (watch it live in Mission Control)</label>
+        <div id="hex-view" tabindex="0" title="Click a byte to start a selection, click again (or drag) to end it"></div>
+        <div class="hex-nav">
+          <button class="paper-btn paper-btn-text" id="hex-prev">◀ Prev 4 KB</button>
+          <span id="hex-offset">offset 0x00000000</span>
+          <button class="paper-btn paper-btn-text" id="hex-next">Next 4 KB ▶</button>
+          <label>Jump to <input id="hex-jump" type="text" placeholder="0x1000" size="8"></label>
+        </div>
+        <div id="glitch-selection" class="sel-info">Selection: none — click bytes in the hex view to select a range.</div>
+      </div>
+      <div id="glitch-right" class="pane">
+        <div class="pane-title">CORRUPTION</div>
+        <progress class="paper-progress hidden" id="glitch-progress" indeterminate max="1"></progress>
+        <div class="glitch-controls">
+          <fieldset><legend>Operations (applied in order, per byte)</legend>
+            <label><input type="checkbox" class="paper-check glitch-op" data-op="randomize" checked> Randomize</label>
+            <label><input type="checkbox" class="paper-check glitch-op" data-op="zero"> Zero out</label>
+            <label><input type="checkbox" class="paper-check glitch-op" data-op="bitshift"> Bit-shift</label>
+            <label><input type="checkbox" class="paper-check glitch-op" data-op="invert"> Invert</label>
+            <label><input type="checkbox" class="paper-check glitch-op" data-op="swap"> Byte-swap</label>
+            <label><input type="checkbox" class="paper-check glitch-op" data-op="repeat"> Repeat chunk</label>
+          </fieldset>
+          <label class="slider-row">Intensity — how much of the selection gets rewritten <input type="range" class="paper-range" id="glitch-intensity" min="1" max="100" value="25" aria-label="Corruption intensity"> <input id="glitch-intensity-val" class="num-input" type="number" min="1" max="100" value="25"></label>
+          <label class="check-row"><input type="checkbox" class="paper-switch" id="glitch-protect" checked> Protect file header (<span id="glitch-protect-bytes">0</span> bytes — keeps the file parseable)</label>
+          <label class="seed-row">Seed <input id="glitch-seed" type="number" value="1337"> <button class="paper-btn paper-btn-text" id="glitch-dice" title="Random seed">🎲</button></label>
+          <div class="glitch-buttons">
+            <button class="paper-btn paper-btn-primary" id="btn-glitch-apply" disabled>⚡ Corrupt selection</button>
+            <button class="paper-btn" id="btn-glitch-all" disabled>Corrupt whole file</button>
+            <button class="paper-btn" id="btn-glitch-reset" disabled>Reset copy</button>
+            <button class="paper-btn" id="btn-glitch-export" disabled>Export corrupted file…</button>
+          </div>
+          <div id="glitch-log" class="log">Works on a COPY in the temp folder — your original is never touched.</div>
+          <div class="pane-title" style="margin-top:10px">SNAPSHOTS</div>
+          <ol id="glitch-history"></ol>
+          <div class="pane-actions"><button class="paper-btn" id="btn-glitch-recipe" disabled>Export recipe (JSON)…</button></div>
+        </div>
+        <div class="pane-title" style="margin-top:10px">PREVIEW + EFFECT LAB</div>
+        <div id="glitch-preview-wrap">
+          <canvas id="glitch-preview"></canvas>
+          <div id="glitch-preview-empty">Corrupt an image or video file to preview it here.</div>
+        </div>
+        <div class="fx-row">
+          <label><input type="checkbox" class="paper-switch fx" id="fx-scanlines"> Scanlines</label>
+          <label><input type="checkbox" class="paper-switch fx" id="fx-chroma"> Chromatic aberration</label>
+          <label><input type="checkbox" class="paper-switch fx" id="fx-crt"> CRT / VHS</label>
+          <label><input type="checkbox" class="paper-switch fx" id="fx-tiles"> Corrupt tiles</label>
+          <label><input type="checkbox" class="paper-switch fx" id="fx-pixelsort"> Pixel sort</label>
+          <label><input type="checkbox" class="paper-switch fx" id="fx-dither"> Dither</label>
+          <button class="paper-btn" id="btn-glitch-load-play">Load corrupted copy in Play</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ ASCII (live ASCII video) ============ -->
+    <section id="tab-ascii" class="panel">
+      <div id="ascii-controls" class="pane">
+        <div class="pane-title">ASCII VIDEO</div>
+        <div class="control-section">/SOURCE</div>
+        <div class="pane-actions">
+          <button class="paper-btn paper-btn-primary" id="btn-ascii-webcam">Webcam</button>
+          <button class="paper-btn" id="btn-ascii-file">Video file</button>
+          <button class="paper-btn" id="btn-ascii-stop" disabled>Stop</button>
+        </div>
+        <div class="control-section">/GRID</div>
+        <label class="slider-row">Columns <input type="range" class="paper-range" id="ascii-cols" min="40" max="180" value="110" aria-label="ASCII columns"> <input id="ascii-cols-val" class="num-input" type="number" min="40" max="180" value="110"></label>
+        <div class="control-section">/STYLE — LIBRARY, GROUPED BY FAMILY</div>
+        <label class="select-row">Charset preset
+<select class="paper-select" id="ascii-charset">
+          <option value=" .:-=+*#%@" selected>Standard .:-=+*#%@</option>
+          <option value=" .·:;+*#%@█">Dense blocks</option>
+          <option value=" .,:;irsXA253hMHGS#9B&amp;@">Detailed</option>
+          <option value=" 011">Binary 01</option>
+          <option value=" .:░▒▓█">Blocks ░▒▓█</option>
+        </select></label>
+        <label class="ramp-row">Character ramp — edit it, the grid uses exactly these characters, darkest first
+          <input id="ascii-ramp" type="text" value=" .:-=+*#%@" spellcheck="false">
+        </label>
+        <label class="select-row">Style (ASCII Magic-style library)
+<select class="paper-select" id="ascii-filter">
+          <option value="ascii" selected>ASCII &amp; TEXT — character grid</option>
+          <option value="braille">ASCII &amp; TEXT — braille matrix</option>
+          <option value="pixel">PIXEL &amp; BLOCKS — pixel art</option>
+          <option value="blocks">PIXEL &amp; BLOCKS — solid pixel blocks</option>
+          <option value="mosaic">PIXEL &amp; BLOCKS — mosaic tiles</option>
+          <option value="lego">PIXEL &amp; BLOCKS — LEGO bricks</option>
+          <option value="led">PIXEL &amp; BLOCKS — LED matrix</option>
+          <option value="voxel">PIXEL &amp; BLOCKS — voxel cubes</option>
+          <option value="dither">PRINT &amp; PAPER — error-diffusion dither</option>
+          <option value="halftone">PRINT &amp; PAPER — halftone print dots</option>
+          <option value="halftone-cmyk">PRINT &amp; PAPER — CMYK halftone</option>
+          <option value="thermal">LIGHT &amp; COLOR — thermal heat camera</option>
+          <option value="neon">LIGHT &amp; COLOR — neon dots, kick swells</option>
+          <option value="vision">GLITCH &amp; SIGNAL — motion-detection boxes</option>
+        </select></label>
+        <label class="select-row">Dither algorithm
+<select class="paper-select" id="ascii-dither-algo">
+          <option value="floyd-steinberg" selected>Floyd–Steinberg — smooth, classic</option>
+          <option value="atkinson">Atkinson — high contrast, chunky</option>
+          <option value="burkes">Burkes — softer than Floyd–Steinberg</option>
+          <option value="stucki">Stucki — fine detail, slow</option>
+          <option value="sierra">Sierra — balanced, less wormy</option>
+          <option value="sierra2">Sierra two-row — faster, punchier</option>
+          <option value="sierra-lite">Sierra lite — minimal diffusion</option>
+          <option value="bayer2">Bayer 2×2 — ordered, tiny dots</option>
+          <option value="bayer4">Bayer 4×4 — ordered, classic</option>
+          <option value="bayer8">Bayer 8×8 — ordered, fine grain</option>
+        </select></label>
+        <label class="select-row">Palette
+<select class="paper-select" id="ascii-palette">
+          <option value="bw" selected>1-bit B&amp;W</option>
+          <option value="gameboy">Game Boy green</option>
+          <option value="pico8">PICO-8 (16 colours)</option>
+          <option value="c64">Commodore 64 (16 colours)</option>
+          <option value="riso">Risograph inks</option>
+          <option value="custom">Custom</option>
+        </select></label>
+        <label class="select-row">Mosaic tile shape
+<select class="paper-select" id="ascii-tile">
+          <option value="square" selected>Square tiles</option>
+          <option value="wide">Wide tiles</option>
+          <option value="tall">Tall tiles</option>
+        </select></label>
+        <label class="slider-row">Density — how much of the frame gets drawn <input type="range" class="paper-range" id="ascii-density" min="10" max="100" value="100" aria-label="Style density"> <input id="ascii-density-val" class="num-input" type="number" min="10" max="100" value="100"></label>
+        <label class="slider-row">Contrast — stretch the brights and darks apart <input type="range" class="paper-range" id="ascii-contrast" min="50" max="200" value="100" aria-label="Style contrast"> <input id="ascii-contrast-val" class="num-input" type="number" min="50" max="200" value="100"></label>
+        <div class="control-section">/POST FX — STACKABLE, IN ORDER</div>
+        <fieldset id="ascii-postfx"><legend>Post-effects — ticked ones run top to bottom over the style</legend>
+          <label><input type="checkbox" class="paper-check ascii-fx" data-fx="vignette"> Vignette</label>
+          <label><input type="checkbox" class="paper-check ascii-fx" data-fx="scanlines"> Scan Lines</label>
+          <label><input type="checkbox" class="paper-check ascii-fx" data-fx="crt"> CRT Curvature</label>
+          <label><input type="checkbox" class="paper-check ascii-fx" data-fx="chroma"> Chromatic Aberration</label>
+          <label><input type="checkbox" class="paper-check ascii-fx" data-fx="bloom"> Bloom</label>
+          <label><input type="checkbox" class="paper-check ascii-fx" data-fx="charbloom"> Character Bloom</label>
+          <label><input type="checkbox" class="paper-check ascii-fx" data-fx="grain"> Film Grain</label>
+          <label><input type="checkbox" class="paper-check ascii-fx" data-fx="glitch"> Glitch</label>
+          <label><input type="checkbox" class="paper-check ascii-fx" data-fx="blur"> Blur</label>
+          <label><input type="checkbox" class="paper-check ascii-fx" data-fx="halftone-fx"> Halftone</label>
+          <label><input type="checkbox" class="paper-check ascii-fx" data-fx="pixelate"> Pixelate</label>
+          <label><input type="checkbox" class="paper-check ascii-fx" data-fx="dust"> Film Dust</label>
+          <label><input type="checkbox" class="paper-check ascii-fx" data-fx="overlay"> Color Overlay</label>
+        </fieldset>
+        <div class="control-section">/RECIPES — ONE-CLICK FULL LOOKS</div>
+        <label class="select-row">Recipe
+<select class="paper-select" id="ascii-recipe">
+          <option value="" selected>— No recipe —</option>
+        </select></label>
+        <div class="pane-actions">
+          <button class="paper-btn" id="btn-ascii-recipe-save">Save current as recipe…</button>
+          <button class="paper-btn" id="btn-ascii-recipe-export">Export recipes (JSON)…</button>
+          <button class="paper-btn" id="btn-ascii-recipe-import">Import recipes…</button>
+        </div>
+        <div class="control-section">/AUDIO + DEPTH</div>
+        <label class="check-row"><input type="checkbox" class="paper-switch" id="ascii-invert"> Invert</label>
+        <label class="check-row"><input type="checkbox" class="paper-switch" id="ascii-color" checked> Color</label>
+        <label class="check-row"><input type="checkbox" class="paper-switch" id="ascii-reactive" checked> Audio-reactive (density + glitch follow the music)</label>
+        <label class="check-row"><input type="checkbox" class="paper-switch" id="ascii-depth-slice"> Depth-sliced — near layers dense, far layers sparse (needs a depth map from Cook)</label>
+        <div class="control-section">/EXPORT</div>
+        <div class="pane-actions">
+          <button class="paper-btn" id="btn-ascii-snapshot">Snapshot PNG</button>
+          <select id="ascii-export-scale" title="Still export resolution">
+            <option value="1">1× still</option>
+            <option value="2" selected>2× still</option>
+            <option value="4">4× still</option>
+          </select>
+          <button class="paper-btn" id="btn-ascii-export-still">Export still (PNG)…</button>
+          <button class="paper-btn" id="btn-ascii-export-gif">Export GIF loop (3 s)…</button>
+        </div>
+        <div id="ascii-status" class="sys-msg">No source yet. Webcam needs camera permission; video file plays from disk.</div>
+      </div>
+      <div id="ascii-stage"><canvas id="ascii-canvas"></canvas></div>
+      <video id="ascii-video" class="hidden" muted loop playsinline></video>
+    </section>
+
+    <!-- ============ CUT (beat-cut auto-edit) ============ -->
+    <section id="tab-cut" class="panel">
+      <div id="cut-controls" class="pane">
+        <div class="pane-title">BEAT-CUT AUTO-EDIT</div>
+        <div class="tab-blurb">BEAT-CUT — chop a folder of clips to the beat of the shared track. Same song as every other tab; the cuts land on its beats.</div>
+        <progress class="paper-progress hidden" id="cut-progress" indeterminate max="1"></progress>
+        <div class="pane-actions">
+          <button class="paper-btn paper-btn-primary" id="btn-cut-folder">Clips folder…</button>
+          <button class="paper-btn" id="btn-cut-track">Track…</button>
+        </div>
+        <div id="cut-info" class="sys-msg">Drop a folder of clips + a track. Pulse finds the beats and cuts the clips to them, like the moviepy + librosa recipe — rendered live as a preview timeline.</div>
+        <label class="slider-row">Beats per clip — how long each clip holds before the cut <input type="range" class="paper-range" id="cut-bpc" min="1" max="8" value="2" aria-label="Beats per clip"> <input id="cut-bpc-val" class="num-input" type="number" min="1" max="8" value="2"></label>
+        <div class="pane-actions">
+          <button class="paper-btn paper-btn-primary" id="btn-cut-generate" disabled>Generate cut</button>
+          <button class="paper-btn" id="btn-cut-export" disabled>Export timeline (JSON)…</button>
+        </div>
+        <div id="cut-stats" class="sys-msg"></div>
+      </div>
+      <div id="cut-main" class="pane">
+        <div class="pane-title">TIMELINE</div>
+        <div id="cut-timeline"></div>
+        <video id="cut-video" controls muted playsinline></video>
+        <div class="pane-actions">
+          <button class="paper-btn paper-btn-primary" id="btn-cut-preview" disabled>Play preview cut</button>
+          <span id="cut-now" class="sys-msg"></span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ COOK (photo + song: the image cooks cumulatively on the audio) ============ -->
+    <section id="tab-cook" class="panel">
+      <div id="cook-controls" class="pane">
+        <div class="pane-title">COOK — PHOTO + SONG</div>
+        <!-- The flow, left → right, top → bottom: pick photo → pick song
+             (the shared track) → START COOKING → export JPEG. The start
+             button lives HERE, at the top, big and obvious — never buried
+             under Export again. -->
+        <div id="cook-hero">
+          <div class="cook-flow">1 PICK PHOTO → 2 PICK SONG (shared track) → <b>3 START COOKING</b> → 4 EXPORT JPEG</div>
+          <div class="pane-actions">
+            <button id="btn-cook-start" class="cook-start-btn" disabled>▶ START COOKING</button>
+            <button class="paper-btn" id="btn-cook-stop" disabled>Stop</button>
+          </div>
+          <div id="cook-progress-text" class="sys-msg">Pick a photo and a song (or system audio), then start cooking. The image transforms cumulatively — the final frame depends on the song.</div>
+          <progress class="paper-progress" id="cook-progress" value="0" max="1"></progress>
+          <div id="cook-meter" class="sys-msg">cook level: 0%</div>
+        </div>
+        <div class="cook-step open" data-step="photo">
+          <button class="cook-step-head" type="button"><span class="cook-step-num">01</span> PHOTO <span class="cook-step-state" id="cook-step-photo">NONE</span></button>
+          <div class="cook-step-body">
+            <div class="pane-actions">
+              <button class="paper-btn paper-btn-primary" id="btn-cook-image">Pick photo…</button>
+              <span id="cook-image-name" class="sys-msg">no photo yet</span>
+            </div>
+          </div>
+        </div>
+        <div class="cook-step" data-step="song">
+          <button class="cook-step-head" type="button"><span class="cook-step-num">02</span> SONG <span class="cook-step-state" id="cook-step-song">NONE</span></button>
+          <div class="cook-step-body">
+            <div class="pane-actions">
+              <button class="paper-btn paper-btn-primary" id="btn-cook-song">Pick song…</button>
+              <button class="paper-btn" id="btn-cook-sysaudio">Use system audio</button>
+              <span id="cook-song-name" class="sys-msg">no song yet</span>
+            </div>
+          </div>
+        </div>
+        <div class="cook-step" data-step="recipe">
+          <button class="cook-step-head" type="button"><span class="cook-step-num">03</span> RECIPE <span class="cook-step-state" id="cook-step-recipe">3 ON</span></button>
+          <div class="cook-step-body">
+            <fieldset><legend>Which effects the audio drives — the photo keeps cooking while the song plays</legend>
+              <label><input type="checkbox" class="paper-switch cook-fx" id="cook-fx-displace" checked> Beat displacement</label>
+              <label><input type="checkbox" class="paper-switch cook-fx" id="cook-fx-warp" checked> Bass color warp</label>
+              <label><input type="checkbox" class="paper-switch cook-fx" id="cook-fx-sort" checked> Pixel sort</label>
+              <label><input type="checkbox" class="paper-switch cook-fx" id="cook-fx-tiles"> Corrupt tiles</label>
+              <label><input type="checkbox" class="paper-switch cook-fx" id="cook-fx-crt"> CRT / VHS</label>
+              <label><input type="checkbox" class="paper-switch cook-fx" id="cook-fx-dither"> Dither</label>
+              <label><input type="checkbox" class="paper-switch cook-fx" id="cook-fx-gradmap"> Gradient map — recolor through a gradient (duotone)</label>
+              <label><input type="checkbox" class="paper-switch cook-fx" id="cook-fx-grain"> Grain — film grain baked in</label>
+              <label><input type="checkbox" class="paper-switch cook-fx" id="cook-fx-halftone"> Halftone — print dots over the image</label>
+              <label><input type="checkbox" class="paper-switch cook-fx" id="cook-fx-geo"> Geometric shapes — the photo re-drawn as triangles</label>
+              <label><input type="checkbox" class="paper-switch cook-fx" id="cook-fx-mesh"> Mesh tint — a gradient wash that follows the bass</label>
+            </fieldset>
+            <label class="cook-style-row">Style pass — re-render the photo in a style from the ASCII library, baked in as it cooks
+              <select id="cook-style">
+                <option value="none" selected>— No style pass —</option>
+                <option value="ascii">ASCII character grid</option>
+                <option value="braille">Braille matrix</option>
+                <option value="pixel">Pixel art</option>
+                <option value="mosaic">Mosaic tiles</option>
+                <option value="lego">LEGO bricks</option>
+                <option value="led">LED matrix</option>
+                <option value="voxel">Voxel cubes</option>
+                <option value="dither">Error-diffusion dither</option>
+                <option value="halftone-cmyk">CMYK halftone</option>
+                <option value="thermal">Thermal</option>
+                <option value="neon">Neon dots</option>
+              </select>
+            </label>
+            <label class="slider-row">How hard — how much the song cooks the photo <input type="range" class="paper-range" id="cook-intensity" min="1" max="100" value="50" aria-label="Cook intensity"> <input id="cook-intensity-val" class="num-input" type="number" min="1" max="100" value="50"></label>
+          </div>
+        </div>
+        <div class="cook-step" data-step="export">
+          <button class="cook-step-head" type="button"><span class="cook-step-num">04</span> EXPORT <span class="cook-step-state" id="cook-step-export">0%</span></button>
+          <div class="cook-step-body">
+            <div class="pane-actions">
+              <button id="btn-cook-download" class="export-pill" disabled>⬇ Download JPEG · <span id="cook-export-size">—</span></button>
+              <button class="paper-btn" id="btn-cook-snapshot" disabled>Snapshot now</button>
+            </div>
+            <div class="pane-actions">
+              <button class="paper-btn" id="btn-cook-compare">Hold to see original</button>
+              <button class="paper-btn" id="btn-cook-split" aria-pressed="false">Side by side</button>
+            </div>
+          </div>
+        </div>
+        <div class="cook-step" data-step="depth">
+          <button class="cook-step-head" type="button"><span class="cook-step-num">05</span> DEPTH <span class="cook-step-state" id="cook-step-depth">NONE</span></button>
+          <div class="cook-step-body">
+            <p class="sys-msg">Monocular depth from the photo, entirely in the app — no upload. FastDepth (MIT) runs first; Depth Anything V2 Small (Apache 2.0) is the higher-quality fallback. Technique inspired by <b>Gather · 聚 by DAO</b> — credit in README + credits below. Models download on first use (~2 MB / ~27 MB) to the app's data folder.</p>
+            <div class="pane-actions">
+              <button class="paper-btn paper-btn-primary" id="btn-cook-depth">Estimate depth</button>
+              <select id="cook-depth-model" title="Depth model">
+                <option value="fastdepth" selected>FastDepth — fast, 2 MB</option>
+                <option value="dav2">Depth Anything V2 Small — sharper, 27 MB</option>
+              </select>
+              <button class="paper-btn" id="btn-cook-depth-heuristic">Heuristic (offline)</button>
+            </div>
+            <div id="cook-depth-status" class="sys-msg">No depth map yet — estimate one and the photo gains a third dimension.</div>
+            <div class="pane-actions">
+              <button class="paper-btn" id="btn-cook-depth-view" aria-pressed="false">View: photo</button>
+              <button class="paper-btn" id="btn-cook-depth-heat" aria-pressed="false">Heat map</button>
+            </div>
+            <label class="slider-row">Parallax — foreground/background sway apart with the beat <input type="range" class="paper-range" id="cook-depth-parallax" min="0" max="100" value="40" aria-label="Depth parallax"> <input id="cook-depth-parallax-val" class="num-input" type="number" min="0" max="100" value="40"></label>
+            <label class="check-row"><input type="checkbox" class="paper-switch" id="cook-depth-slice"> Depth-sliced styles — near layers dense, far layers sparse</label>
+            <label class="check-row"><input type="checkbox" class="paper-switch" id="cook-depth-blur"> Depth blur — far layers blur more as the bass rises</label>
+          </div>
+        </div>
+      </div>
+      <div id="cook-stage">
+        <canvas id="cook-canvas"></canvas>
+        <div id="cook-empty">No photo loaded yet — pick a JPG or PNG and a song, and the photo will cook on the music.</div>
+      </div>
+    </section>
+
+    <!-- ============ MISSION CONTROL — everything at once: live map, pipeline x-ray, live code + live hex ============ -->
+    <section id="tab-mission" class="panel">
+      <div id="mc-main" class="pane">
+        <div class="pane-title">LIVE MAP — THE MUSIC, AS BLIPS <span id="mc-map-count" class="sys-msg"></span></div>
+        <canvas id="mc-map"></canvas>
+        <div class="pane-title" style="margin-top:12px">PIPELINE X-RAY — WATCH THE SONG TRAVEL THROUGH THE APP</div>
+        <div id="mc-xray">
+          <div class="xray-stage" data-stage="source"><div class="xray-name">SOURCE</div><div class="xray-val" id="xray-source">—</div><div class="xray-sub" id="xray-source-sub">no audio source</div></div>
+          <div class="xray-flow"><i></i><i></i><i></i></div>
+          <div class="xray-stage" data-stage="decode"><div class="xray-name">DECODE</div><div class="xray-val" id="xray-decode">—</div><div class="xray-sub" id="xray-decode-sub">—</div></div>
+          <div class="xray-flow"><i></i><i></i><i></i></div>
+          <div class="xray-stage" data-stage="fft"><div class="xray-name">FFT</div><div class="xray-val" id="xray-fft">—</div><div class="xray-sub" id="xray-fft-sub">—</div></div>
+          <div class="xray-flow"><i></i><i></i><i></i></div>
+          <div class="xray-stage" data-stage="detect"><div class="xray-name">BEAT / BASS / CHORD / KEY</div><div class="xray-val" id="xray-detect">—</div><div class="xray-sub" id="xray-detect-sub">—</div></div>
+          <div class="xray-flow"><i></i><i></i><i></i></div>
+          <div class="xray-stage" data-stage="layers"><div class="xray-name">EFFECT LAYERS</div><div class="xray-val" id="xray-layers">—</div><div class="xray-sub" id="xray-layers-sub">—</div></div>
+          <div class="xray-flow"><i></i><i></i><i></i></div>
+          <div class="xray-stage" data-stage="output"><div class="xray-name">OUTPUT</div><div class="xray-val" id="xray-output">—</div><div class="xray-sub" id="xray-output-sub">—</div></div>
+        </div>
+        <div id="mc-tiles"></div>
+      </div>
+      <div id="mc-rail" class="pane">
+        <div class="pane-title">LIVE CODE <span id="mc-code-status" class="sys-msg"></span></div>
+        <pre id="mc-code">// The engine is listening — play a track or press LISTEN TO MY PC.</pre>
+        <div class="pane-title" style="margin-top:12px">LIVE HEX — WORKING COPY <span class="sys-msg" id="mc-hex-file"></span></div>
+        <div id="mc-hex">No file loaded in the Glitch tab yet — open a file to corrupt and watch its bytes change here as the audio corrupts them.</div>
+        <div class="pane-actions"><button class="paper-btn" id="btn-mc-hex-open">Open in Glitch tab</button></div>
+        <div class="pane-note">The hex view works on a COPY in the temp folder — the original is never touched. Turn on AUDIO CORRUPT in the Glitch tab and the bytes here change on every kick.</div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer id="transport">
+    <button class="paper-btn paper-btn-icon" id="btn-prev" aria-label="Previous track (b)">
+      <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
+    </button>
+    <button class="paper-btn paper-btn-primary paper-btn-icon" id="btn-play" aria-label="Play/pause (Space or p)" disabled>
+      <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+    </button>
+    <button class="paper-btn paper-btn-icon" id="btn-next" aria-label="Next track (n)">
+      <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M16 6h2v12h-2zM6 18l8.5-6L6 6z"/></svg>
+    </button>
+    <span id="time-current">0:00</span>
+    <input type="range" class="paper-range" id="seek" min="0" max="1000" value="0" step="1" aria-label="Seek" disabled>
+    <span id="time-total">0:00</span>
+    <span id="bpm" class="bpm"></span>
+    <span id="track-name" class="track-name">No track loaded</span>
+    <span class="spacer"></span>
+    <span id="rec-dot" class="rec-dot hidden">● REC <span id="rec-time">0:00</span></span>
+    <button class="paper-btn" id="btn-record" title="Record video (Ctrl+R)">Record</button>
+    <button class="paper-btn" id="btn-snapshot" title="Snapshot PNG (Ctrl+S)">Snapshot</button>
+  </footer>
+</div>
+
+<dialog class="paper-dialog" id="add-layer-dialog">
+  Add a layer
+  <div class="dlg-body">
+    <p class="sys-msg">Layers stack top to bottom over the look. Pick one — tune it after it lands.</p>
+    <div id="layer-tiles" class="layer-tiles"></div>
+  </div>
+  <div class="dlg-actions">
+    <button class="paper-btn paper-btn-text" id="btn-close-add-layer">Cancel</button>
+  </div>
+</dialog>
+
+<dialog class="paper-dialog" id="palette-dialog">
+  Command palette
+  <div class="dlg-body">
+    <input id="palette-input" type="text" placeholder="Type a command — tabs, looks, listen, export…" spellcheck="false" autocomplete="off">
+    <div id="palette-list" class="palette-list"></div>
+  </div>
+</dialog>
+
+<dialog class="paper-dialog" id="shortcuts-dialog">
+  Keyboard shortcuts
+  <div class="dlg-body">
+    <p><b>Space / p</b> — play / pause &nbsp;·&nbsp; <b>n / b</b> — next / previous track</p>
+    <p><b>m</b> — shuffle &nbsp;·&nbsp; <b>r</b> — cycle repeat</p>
+    <p><b>Ctrl+1…7</b> — switch tabs &nbsp;·&nbsp; <b>1…9, 0</b> — looks (Visualize tab; 0 = Depth)</p>
+    <p><b>Ctrl+K</b> — command palette &nbsp;·&nbsp; <b>F</b> — presentation mode (Visualize)</p>
+    <p><b>Ctrl+Shift+C</b> — pop out live code editor &nbsp;·&nbsp; <b>Ctrl+Shift+H</b> — pop out hex editor</p>
+    <p><b>Ctrl+O</b> — open media &nbsp;·&nbsp; <b>Ctrl+M</b> — open MIDI</p>
+    <p><b>Ctrl+R</b> — record video &nbsp;·&nbsp; <b>Ctrl+S</b> — snapshot PNG</p>
+    <p><b>↑ / ↓</b> — move in the queue (Play tab)</p>
+  </div>
+  <div class="dlg-actions">
+    <button class="paper-btn paper-btn-text" id="btn-close-shortcuts">Close</button>
+  </div>
+</dialog>
+
+<script src="assets/gif/gif.js"></script>
+<script src="analysis.js"></script>
+<script src="codegen.js"></script>
+<script src="ascii-styles.js"></script>
+<script src="depth.js"></script>
+<script src="audio-engine.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

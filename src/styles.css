@@ -1,0 +1,624 @@
+/* Paper Mono by Paper Design (paper.design/mono), SIL OFL 1.1 — see src/assets/fonts/OFL.txt.
+   Variable font first, static weights as fallback if the variable file can't load. */
+@font-face {
+  font-family: 'Paper Mono';
+  src: url('assets/fonts/webfonts/PaperMono[wght].woff2') format('woff2-variations');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Paper Mono';
+  src: url('assets/fonts/webfonts/PaperMono-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Paper Mono';
+  src: url('assets/fonts/webfonts/PaperMono-Medium.woff2') format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Paper Mono';
+  src: url('assets/fonts/webfonts/PaperMono-SemiBold.woff2') format('woff2');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Paper Mono';
+  src: url('assets/fonts/webfonts/PaperMono-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  --font-mono: 'Paper Mono', ui-monospace, 'SF Mono', Consolas, 'Cascadia Mono', monospace;
+  /* Paper Mono's characterful OpenType features — VERIFIED against the font's
+     own GSUB table with fontTools (the repo README/docs list none of them):
+       ss01  Duospace glyphs (font name ID 268: "Duospace glyphs")
+       cv01  single-story 'a' (a -> a.cv01, incl. accented a's)
+       zero  slashed zero (zero -> zero.zero)
+       ss02  alternate M / W / m / w / AE / OE glyphs
+       ss03  wider space (duospace spacing)
+       ss04  alternate arrows
+     Applied on the whole mono stack; the smoke test pixel-compares glyphs
+     with the features on vs off to prove they actually took effect. */
+  --font-features: "ss01" 1, "cv01" 1, "zero" 1, "ss02" 1, "ss03" 1, "ss04" 1;
+  /* Toaster energy: a vivid hot accent next to the theme accent. */
+  --accent-hot: #ff2e88;
+  --accent-hot-soft: #ff7ab8;
+  /* ---- App theme variables (v0.2.4) ----
+     The theme lives on <body data-theme> and recolors the WHOLE app from
+     any tab. Sky is the 0.2.3 blue. NOTHING below may use a hardcoded
+     color for app chrome — if a panel stays blue when the theme changes,
+     its color came from a literal, not a var. */
+  --app-bg: #0b1020;
+  --app-surface: #0f172a;
+  --app-surface-2: #111a2e;
+  --app-surface-3: #16213a;
+  --app-surface-4: #1e293b;
+  --app-surface-5: #28354d;
+  --app-border: #1e293b;
+  --app-border-strong: #334155;
+  --app-text: #eef2ff;
+  --app-text-2: #e2e8f0;
+  --app-text-3: #cbd5e1;
+  --app-dim: #94a3b8;
+  --app-faint: #64748b;
+  --app-accent: #7dd3fc;
+  --app-accent-2: #38bdf8;
+  --app-accent-soft: #a5b4fc;
+  --app-accent-ink: #082f49;
+  --app-track: #0c4a6e;
+  --app-track-border: #155e75;
+  --app-code-bg: #05070f;
+  --app-code-bg-2: #0b1220;
+  --app-outline: #475569;
+}
+/* Midnight — near-black with a cyan accent. */
+body[data-theme="midnight"] {
+  --app-bg: #04060f; --app-surface: #0b1020; --app-surface-2: #0a0f1e;
+  --app-surface-3: #101828; --app-surface-4: #16213a; --app-surface-5: #1e293b;
+  --app-border: #16213a; --app-border-strong: #28354d;
+  --app-text: #eef2ff; --app-text-2: #dbeafe; --app-text-3: #bfdbfe;
+  --app-dim: #7dd3fc; --app-faint: #475569;
+  --app-accent: #22d3ee; --app-accent-2: #22d3ee; --app-accent-soft: #818cf8;
+  --app-track: #164e63; --app-track-border: #155e75;
+  --app-code-bg: #02040a; --app-code-bg-2: #04060f; --app-outline: #334155;
+}
+/* Sunset — deep purple with amber/pink accents. */
+body[data-theme="sunset"] {
+  --app-bg: #1c0626; --app-surface: #2b0a3d; --app-surface-2: #2a0a3a;
+  --app-surface-3: #3b1154; --app-surface-4: #4a1a5e; --app-surface-5: #5b2a6e;
+  --app-border: #4a1a5e; --app-border-strong: #6b2d7d;
+  --app-text: #fff7ed; --app-text-2: #ffedd5; --app-text-3: #fed7aa;
+  --app-dim: #e9a8c9; --app-faint: #a1628a;
+  --app-accent: #fbbf24; --app-accent-2: #fb7185; --app-accent-soft: #f9a8d4;
+  --app-track: #7c2d12; --app-track-border: #9a3412;
+  --app-code-bg: #12031a; --app-code-bg-2: #1c0626; --app-outline: #6b2d7d;
+}
+/* Mono — pure black/white/grey. */
+body[data-theme="mono"] {
+  --app-bg: #000000; --app-surface: #111111; --app-surface-2: #161616;
+  --app-surface-3: #1c1c1c; --app-surface-4: #262626; --app-surface-5: #333333;
+  --app-border: #333333; --app-border-strong: #525252;
+  --app-text: #f5f5f5; --app-text-2: #e5e5e5; --app-text-3: #d4d4d4;
+  --app-dim: #a3a3a3; --app-faint: #737373;
+  --app-accent: #ffffff; --app-accent-2: #ffffff; --app-accent-soft: #a3a3a3;
+  --app-track: #262626; --app-track-border: #404040;
+  --app-code-bg: #000000; --app-code-bg-2: #0a0a0a; --app-outline: #525252;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; overflow: hidden; background: var(--app-bg); font-family: var(--font-mono); font-feature-settings: var(--font-features); font-weight: 500; color: var(--app-text); }
+#app { display: flex; flex-direction: column; height: 100vh; }
+.hidden { display: none !important; }
+/* Author display rules (flex etc.) beat the UA [hidden] style — force it. */
+[hidden] { display: none !important; }
+
+/* ---------- top tab bar (Material 3) ---------- */
+#tabbar { display: flex; align-items: center; gap: 18px; padding: 0 14px; height: 52px; background: var(--app-surface-2); border-bottom: 1px solid var(--app-border); flex: 0 0 auto; }
+.brand { font-weight: 800; letter-spacing: .28em; font-size: 17px; white-space: nowrap; }
+.brand span { color: var(--app-accent-2); }
+.brand em { font-style: normal; font-size: 11px; color: var(--app-faint); letter-spacing: .1em; margin-left: 4px; }
+#tabs { flex: 1; min-width: 0; height: 100%; display: flex; align-items: stretch; gap: 2px; overflow-x: auto; scrollbar-width: none; }
+#tabs::-webkit-scrollbar { display: none; }
+.tab-actions { margin-left: auto; display: flex; gap: 10px; align-items: center; }
+.menu-anchor { position: relative; display: inline-flex; }
+.sys-status { font-size: 12px; font-weight: 600; color: var(--app-faint); font-variant-numeric: tabular-nums; }
+.sys-status.on { color: #4ade80; }
+.sys-msg { font-size: 12px; color: var(--app-dim); }
+/* LIVE pill — the app is alive when audio drives it. */
+.live-pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; letter-spacing: .12em; color: #fff; background: var(--accent-hot); border-radius: 999px; padding: 5px 11px; }
+.live-pill i { width: 8px; height: 8px; border-radius: 50%; background: #fff; animation: livepulse 1s ease-in-out infinite; }
+@keyframes livepulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .45; transform: scale(.75); } }
+/* System-audio hero: first-class, not a side button. */
+
+
+.sys-empty { font-size: 13px; color: var(--app-dim); line-height: 1.6; background: var(--app-code-bg-2); border: 1px dashed var(--app-border-strong); border-radius: 10px; padding: 10px 12px; }
+.sys-empty b { color: var(--app-text-2); }
+
+/* ---------- panels ---------- */
+#panels { flex: 1; min-height: 0; position: relative; }
+/* v0.2.4: the grid min-height trap — grid children default to
+   min-height: auto, so a tall left panel grew past its box instead of
+   scrolling. Every grid child may shrink to nothing and scroll inside. */
+.panel > * { min-height: 0; min-width: 0; }
+.pane { min-height: 0; }
+/* v0.2.4: the tab grids need an explicit row, or an `auto` row grows with
+   its content and the pane never scrolls — the row must be capped at the
+   container height so tall panels scroll inside it. */
+#tab-glitch.active, #tab-ascii.active, #tab-cook.active, #tab-cut.active, #tab-mission.active { grid-template-rows: minmax(0, 1fr); }
+#play-panels { grid-template-rows: minmax(0, 1fr); }
+/* v0.2.4: every scrollable panel gets a VISIBLE, theme-colored scrollbar
+   (thin, drag + wheel). No more hidden scrollbars hiding content. */
+.pane, #code-lines, #hex-view, #mc-code, #mc-hex, #glitch-history, .palette-list, .glass-panel, #playlist, #library-list, #lookbar.scenes-menu {
+  scrollbar-width: thin;
+  scrollbar-color: var(--app-accent-2) var(--app-surface-3);
+}
+.pane::-webkit-scrollbar, #code-lines::-webkit-scrollbar, #hex-view::-webkit-scrollbar, #mc-code::-webkit-scrollbar, #mc-hex::-webkit-scrollbar, #glitch-history::-webkit-scrollbar, .palette-list::-webkit-scrollbar, .glass-panel::-webkit-scrollbar, #playlist::-webkit-scrollbar, #library-list::-webkit-scrollbar, #lookbar.scenes-menu::-webkit-scrollbar { width: 10px; height: 10px; }
+.pane::-webkit-scrollbar-thumb, #code-lines::-webkit-scrollbar-thumb, #hex-view::-webkit-scrollbar-thumb, #mc-code::-webkit-scrollbar-thumb, #mc-hex::-webkit-scrollbar-thumb, #glitch-history::-webkit-scrollbar-thumb, .palette-list::-webkit-scrollbar-thumb, .glass-panel::-webkit-scrollbar-thumb, #playlist::-webkit-scrollbar-thumb, #library-list::-webkit-scrollbar-thumb, #lookbar.scenes-menu::-webkit-scrollbar-thumb { background: var(--app-accent-2); border: 2px solid var(--app-surface-3); }
+.pane::-webkit-scrollbar-track, #code-lines::-webkit-scrollbar-track, #hex-view::-webkit-scrollbar-track, #mc-code::-webkit-scrollbar-track, #mc-hex::-webkit-scrollbar-track, #glitch-history::-webkit-scrollbar-track, .palette-list::-webkit-scrollbar-track, .glass-panel::-webkit-scrollbar-track, #playlist::-webkit-scrollbar-track, #library-list::-webkit-scrollbar-track, #lookbar.scenes-menu::-webkit-scrollbar-track { background: var(--app-surface-3); }
+/* v0.2.4: text wraps or truncates cleanly instead of spilling out of
+   its box (ellipsis is intentional truncation, not overflow). */
+.log, .fmt-note, .pane-note, #np-title, #np-meta, .sys-msg, .sys-empty, .look-desc, .xray-sub, .param-desc, .cook-flow, .tab-blurb, .viz-card-meta { overflow-wrap: anywhere; }
+.panel { position: absolute; inset: 0; display: none; background: var(--app-bg); }
+.panel.active { display: flex; }
+.pane { background: var(--app-surface); border-right: 1px solid var(--app-border); padding: 12px; overflow-y: auto; }
+.pane-title { font-size: 13px; font-weight: 700; letter-spacing: .14em; color: var(--app-accent); margin-bottom: 10px; }
+.pane-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.pane-note { font-size: 11px; color: var(--app-faint); margin-top: 10px; line-height: 1.5; }
+
+/* Native inputs only — buttons are Material components now. */
+input[type="text"], input[type="number"] { font: inherit; font-size: 13px; color: var(--app-text-2); background: var(--app-surface-3); border: 1px solid var(--app-border-strong); border-radius: 8px; padding: 7px 12px; }
+input[type="text"]:focus, input[type="number"]:focus { border-color: var(--app-accent); outline: none; }
+
+/* ---- Hand-rolled native controls (v0.2.4: Material Web is gone) ----
+   Every control is plain HTML with a .paper-* class. Square, flat,
+   hard-bordered — the raw hand-coded look, in theme variables. */
+#seek { flex: 1; min-width: 80px; }
+/* Tabs: native buttons in the tab bar, hot-pink underline when active. */
+.paper-tab { font: inherit; font-size: 13px; font-weight: 600; letter-spacing: .06em; color: var(--app-dim); background: none; border: none; border-bottom: 3px solid transparent; padding: 0 12px; cursor: pointer; white-space: nowrap; flex: 0 0 auto; }
+.paper-tab:hover { color: var(--app-text); }
+.paper-tab[data-active="true"] { color: #fff; border-bottom-color: var(--accent-hot); }
+/* Buttons: .paper-btn is defined in the v0.2.3 fix #4 section below; the
+   variants live here. */
+.paper-btn-primary { background: var(--app-accent-2); color: var(--app-accent-ink); border-color: var(--app-accent-2); }
+.paper-btn-primary:hover { background: var(--app-accent); border-color: var(--app-accent); }
+.paper-btn-hot { background: var(--accent-hot); border-color: var(--accent-hot); color: #fff; }
+.paper-btn-hot:hover { background: #ff4d9d; border-color: #ff4d9d; }
+.paper-btn-text { background: none; border-color: transparent; }
+.paper-btn-icon { width: 40px; padding: 0; }
+.paper-btn[aria-pressed="true"] { background: var(--app-track); border-color: var(--app-accent-2); color: var(--app-text); }
+.paper-btn:disabled { opacity: .4; cursor: default; }
+/* recording state */
+#btn-record.recording { background: #dc2626; color: #fff; border-color: #dc2626; }
+/* Sliders: native range, square thumb. */
+input[type="range"].paper-range, input[type="range"] { -webkit-appearance: none; appearance: none; height: 4px; background: var(--app-surface-5); cursor: pointer; }
+input[type="range"].paper-range::-webkit-slider-thumb, input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 16px; height: 16px; background: var(--app-accent-2); border: 2px solid var(--app-text); cursor: pointer; }
+input[type="range"].paper-range::-moz-range-thumb, input[type="range"]::-moz-range-thumb { width: 12px; height: 12px; background: var(--app-accent-2); border: 2px solid var(--app-text); border-radius: 0; cursor: pointer; }
+.slider-row .paper-range { flex: 1; }
+/* Switches + checkboxes: native inputs, square, theme-colored. */
+input[type="checkbox"].paper-switch { -webkit-appearance: none; appearance: none; width: 38px; height: 20px; background: var(--app-surface-5); border: 1.5px solid var(--app-border-strong); cursor: pointer; position: relative; flex: 0 0 auto; }
+input[type="checkbox"].paper-switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 13px; height: 13px; background: var(--app-dim); }
+input[type="checkbox"].paper-switch:checked { background: var(--app-track); border-color: var(--app-accent-2); }
+input[type="checkbox"].paper-switch:checked::after { left: 19px; background: #fff; }
+input[type="checkbox"].paper-check { -webkit-appearance: none; appearance: none; width: 16px; height: 16px; background: var(--app-surface-3); border: 1.5px solid var(--app-border-strong); cursor: pointer; position: relative; flex: 0 0 auto; }
+input[type="checkbox"].paper-check:checked { background: var(--app-accent-2); border-color: var(--app-accent-2); }
+input[type="checkbox"].paper-check:checked::after { content: "✕"; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 800; color: var(--app-accent-ink); }
+/* Selects: the old Material floating label is now a plain .select-row label. */
+.select-row { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; font-size: 11px; font-weight: 700; letter-spacing: .1em; color: var(--app-dim); margin: 8px 0; }
+select.paper-select { width: 100%; font: inherit; font-size: 12.5px; color: var(--app-text-2); background: var(--app-surface-3); border: 1px solid var(--app-border-strong); padding: 7px 8px; }
+/* Dialogs: native <dialog>, square, theme-colored. */
+dialog.paper-dialog { background: var(--app-surface); color: var(--app-text); border: 2px solid var(--app-border-strong); padding: 0; max-width: 560px; width: calc(100% - 40px); }
+dialog.paper-dialog::backdrop { background: rgba(0, 0, 0, .6); }
+.paper-dialog .dlg-head { font-size: 14px; font-weight: 700; letter-spacing: .1em; padding: 12px 16px 0; }
+.paper-dialog .dlg-body { padding: 10px 16px; }
+.paper-dialog .dlg-body p { margin: 6px 0; font-size: 13px; color: var(--app-dim); }
+.paper-dialog .dlg-body b { color: var(--app-text); }
+.paper-dialog .dlg-actions { display: flex; gap: 8px; justify-content: flex-end; padding: 12px 16px; }
+/* Menus: native divs. #theme-menu opens with .open; the Visualize menus
+   use the hidden attribute instead. */
+.paper-menu { position: absolute; z-index: 20; background: var(--app-surface); border: 2px solid var(--app-border-strong); padding: 4px; display: flex; flex-direction: column; min-width: 220px; box-shadow: 0 8px 24px rgba(0, 0, 0, .5); }
+.paper-menu-item { font: inherit; font-size: 13px; color: var(--app-text-2); background: none; border: none; text-align: left; padding: 8px 10px; cursor: pointer; white-space: nowrap; }
+.paper-menu-item:hover { background: var(--app-surface-4); color: var(--app-text); }
+.paper-menu-item[data-active="true"] { color: var(--app-accent); font-weight: 700; }
+#theme-menu { display: none; top: calc(100% + 6px); right: 0; }
+#theme-menu.open { display: flex; }
+/* Progress: native <progress>, square, theme-colored. */
+progress.paper-progress { -webkit-appearance: none; appearance: none; width: 100%; height: 8px; background: var(--app-surface-4); border: 1px solid var(--app-border); }
+progress.paper-progress::-webkit-progress-bar { background: var(--app-surface-4); }
+progress.paper-progress::-webkit-progress-value { background: var(--app-accent-2); }
+progress.paper-progress::-moz-progress-bar { background: var(--app-accent-2); }
+label { font-size: 13px; color: var(--app-text-3); display: flex; align-items: center; gap: 6px; }
+fieldset { border: 1px solid var(--app-border); border-radius: 8px; padding: 10px; margin-bottom: 10px; display: flex; flex-wrap: wrap; gap: 8px 14px; }
+fieldset legend { font-size: 11px; color: var(--app-accent); letter-spacing: .08em; padding: 0 6px; }
+.slider-row, .check-row, .seed-row { margin: 8px 0; }
+.slider-row input[type="range"] { flex: 1; }
+.log { font-size: 12px; color: var(--app-dim); background: var(--app-code-bg-2); border: 1px solid var(--app-border); border-radius: 8px; padding: 8px 10px; margin: 8px 0; line-height: 1.5; white-space: pre-wrap; }
+
+/* ---------- Play tab (Mousiki port, v0.2.4) ----------
+   Mousiki's layout, top → bottom: metadata → progress → search →
+   LIBRARY | QUEUE | LYRICS → status. The tab never scrolls as a page:
+   each panel scrolls inside its own box, sized to the window like
+   Mousiki's clamp_output_rows. */
+#tab-play.active { display: flex; flex-direction: column; overflow: hidden; }
+#play-top { flex: 0 0 auto; padding: 10px 14px 6px; border-bottom: 1px solid var(--app-border); display: flex; flex-direction: column; gap: 6px; }
+#play-progress { display: flex; gap: 10px; align-items: center; }
+#play-progress .paper-range { flex: 1; }
+#play-progress span { font-size: 12.5px; color: var(--app-dim); font-variant-numeric: tabular-nums; min-width: 34px; text-align: center; }
+#play-search { flex: 0 0 auto; display: flex; gap: 10px; align-items: center; padding: 8px 14px; border-bottom: 1px solid var(--app-border); flex-wrap: wrap; }
+#play-filter { flex: 1; min-width: 200px; }
+#play-viz { flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px; padding: 8px 14px 0; }
+#play-video { width: 100%; max-height: 200px; background: #000; border-radius: 10px; }
+#now-playing { padding: 4px 2px; }
+#np-title { font-size: 23px; font-weight: 700; overflow-wrap: break-word; }
+#np-meta { font-size: 13px; color: var(--app-dim); margin-top: 3px; overflow-wrap: break-word; }
+#play-spectrum, #play-waveform { width: 100%; background: var(--app-code-bg-2); border: 1px solid var(--app-border); border-radius: 10px; }
+#play-spectrum { height: 120px; }
+#play-waveform { height: 70px; }
+#play-panels { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 1fr 1fr; }
+#play-panels .pane { min-height: 0; display: flex; flex-direction: column; }
+#library-pane, #playlist-pane { border-right: 1px solid var(--app-border); }
+#lyrics-pane { border-right: none; }
+#playlist, #library-list { list-style: none; flex: 1; min-height: 0; overflow-y: auto; }
+#playlist li, #library-list li { padding: 7px 9px; border-radius: 7px; font-size: 13px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--app-text-3); }
+#playlist li:hover, #library-list li:hover { background: var(--app-surface-4); }
+#playlist li.playing, #library-list li.playing { background: var(--app-track); color: #fff; font-weight: 600; }
+#playlist li .dur, #library-list li .dur { float: right; color: var(--app-faint); font-size: 11px; }
+#library-list li.empty { cursor: default; color: var(--app-faint); white-space: normal; overflow: visible; }
+#lyrics { font-size: 14px; line-height: 2.1; color: var(--app-dim); }
+#lyrics .lrc-line { padding: 1px 6px; border-radius: 5px; }
+#lyrics .lrc-line.active { color: #fff; background: var(--app-track); font-weight: 700; }
+#play-status { flex: 0 0 auto; display: flex; gap: 12px; align-items: center; padding: 6px 14px; border-top: 1px solid var(--app-border); font-size: 11.5px; color: var(--app-dim); background: var(--app-surface-2); }
+#play-status .status-keys { margin-left: auto; }
+
+/* ---------- Visualize tab ---------- */
+#tab-visualize { position: absolute; }
+#tab-visualize.active { display: block; }
+#canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.overlay { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; background: radial-gradient(ellipse at 50% 40%, rgba(20,40,90,.55), rgba(5,8,20,.92)); text-align: center; padding: 20px; z-index: 3; }
+/* z-index 3 sits above the canvas (0) but BELOW the tab chrome (4), so the
+   empty-state veil dims the canvas without dimming the lookbar, actions,
+   layer panel, or code panel. */
+.overlay.hidden { display: none; }
+.logo { font-size: 76px; font-weight: 800; letter-spacing: .35em; text-indent: .35em; background: linear-gradient(90deg, #7dd3fc, #c4b5fd, #f9a8d4); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.tag { font-size: 17px; color: var(--app-text-3); }
+.hint { font-size: 13px; color: var(--app-dim); }
+/* SCENES menu (Toaster's V key): the scene list is a dropdown under the
+   bar now, not a permanent rail — the code is the hero of this tab. */
+#lookbar.scenes-menu { position: absolute; top: 56px; left: 12px; z-index: 6; min-width: 260px; max-height: calc(100% - 220px); overflow-y: auto; padding: 8px; }
+#viz-source-menu { position: absolute; top: 56px; left: 12px; z-index: 6; }
+.pane-actions .paper-btn { flex-shrink: 0; white-space: nowrap; }
+/* Live analysis strip: BPM / key / chord / section, from the engine. */
+.live-strip { display: inline-flex; gap: 8px; align-items: center; background: var(--app-surface-3); border: 2px solid var(--accent-hot); border-radius: 999px; padding: 5px 12px; font-size: 12.5px; font-weight: 700; color: #fff; }
+.live-strip span:empty { display: none; }
+/* Live Strudel code panel — the engine writes what it hears. Toaster's
+   model: the code IS the main content, a left column over the canvas. */
+#code-panel { position: absolute; left: 12px; right: auto; width: 420px; top: 64px; bottom: 12px; z-index: 4; background: var(--app-code-bg); border: 2px solid var(--app-border); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; }
+#code-panel.hidden-panel #code-lines { display: none; }
+.code-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 12px; border-bottom: 1px solid var(--app-border); flex: 0 0 auto; flex-wrap: wrap; }
+.code-title { font-size: 12.5px; font-weight: 700; letter-spacing: .14em; color: var(--app-accent); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.code-title #code-status { color: var(--app-faint); letter-spacing: .02em; font-weight: 500; }
+.code-actions { display: flex; gap: 2px; flex-wrap: wrap; }
+.code-actions .paper-btn { height: 30px; padding: 0 10px; font-size: 12px; }
+#code-lines { flex: 1; min-height: 0; font-family: var(--font-mono); font-feature-settings: var(--font-features); font-size: 12.5px; font-weight: 500; line-height: 1.65; color: var(--app-text); padding: 10px 14px; overflow-y: auto; white-space: pre-wrap; margin: 0; }
+#code-panel #code-lines { white-space: pre-wrap; overflow-wrap: anywhere; }
+/* Now-playing card (Toaster's N key): the song as an ID card. */
+.viz-card { position: absolute; top: 64px; right: 384px; z-index: 5; width: 320px; background: var(--app-surface); border: 2px solid var(--app-accent-2); padding: 14px; }
+.viz-card-title { font-size: 18px; font-weight: 700; }
+.viz-card-meta { font-size: 12.5px; color: var(--app-dim); margin-top: 4px; overflow-wrap: break-word; }
+#code-lines .code-dim { color: var(--app-outline); }
+
+/* ---------- Glitch tab ---------- */
+#tab-glitch.active { display: grid; grid-template-columns: minmax(420px, 1.15fr) minmax(380px, 1fr); }
+#glitch-left { display: flex; flex-direction: column; }
+.fmt { font-size: 12px; color: var(--app-accent-soft); }
+.fmt-note { font-size: 12px; color: var(--app-dim); background: var(--app-code-bg-2); border: 1px solid var(--app-border); border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; line-height: 1.5; }
+#hex-view { flex: 1; min-height: 180px; overflow-y: auto; background: var(--app-code-bg); border: 1px solid var(--app-border); border-radius: 8px; padding: 8px 10px; font-family: var(--font-mono); font-size: 12px; line-height: 1.7; user-select: none; }
+.hex-row { display: flex; gap: 14px; white-space: pre; }
+.hex-off { color: var(--app-outline); min-width: 74px; }
+.hex-bytes span { cursor: pointer; padding: 0 1px; border-radius: 3px; }
+.hex-bytes span:hover { background: var(--app-surface-4); }
+.hex-bytes span.sel { background: var(--app-accent-2); color: #082f49; }
+.hex-bytes span.diff { color: #f87171; }
+.hex-ascii { color: var(--app-faint); }
+.hex-nav { display: flex; gap: 8px; align-items: center; margin-top: 8px; font-size: 12px; color: var(--app-dim); }
+.sel-info { font-size: 12px; color: var(--app-accent-soft); margin-top: 8px; }
+.glitch-controls { display: flex; flex-direction: column; }
+.glitch-buttons { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0; }
+#glitch-history { list-style: none; font-size: 12px; color: var(--app-text-3); max-height: 110px; overflow-y: auto; }
+#glitch-history li { padding: 5px 8px; border-radius: 6px; cursor: pointer; display: flex; justify-content: space-between; gap: 8px; }
+#glitch-history li:hover { background: var(--app-surface-4); }
+#glitch-history li .undo { color: var(--app-accent); }
+#glitch-preview-wrap { position: relative; background: var(--app-code-bg); border: 1px solid var(--app-border); border-radius: 8px; min-height: 180px; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+#glitch-preview { max-width: 100%; max-height: 300px; display: block; }
+#glitch-preview-empty { position: absolute; font-size: 13px; color: var(--app-faint); text-align: center; padding: 20px; }
+.fx-row { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 10px; align-items: center; }
+
+/* ---------- ASCII tab ---------- */
+#tab-ascii.active { display: grid; grid-template-columns: 280px 1fr; }
+#ascii-controls { display: flex; flex-direction: column; gap: 4px; }
+#ascii-controls label { flex-direction: column; align-items: flex-start; margin: 8px 0; }
+#ascii-controls label.check-row, #ascii-controls label.slider-row { flex-direction: row; align-items: center; }
+#ascii-controls select { width: 100%; }
+#ascii-stage { background: #000; display: flex; align-items: center; justify-content: center; overflow: hidden; padding: 8px; }
+#ascii-canvas { max-width: 100%; max-height: 100%; }
+
+/* ---------- Cook tab ---------- */
+#tab-cook.active { display: grid; grid-template-columns: 330px 1fr; }
+/* Cook hero: the flow + the big START COOKING button live at the TOP of
+   the tab, visible the moment you open it — never buried under Export. */
+#cook-hero { border: 2px solid var(--app-accent-2); padding: 12px; margin-bottom: 10px; background: var(--app-surface-2); }
+.cook-flow { font-size: 11.5px; color: var(--app-dim); letter-spacing: .06em; margin-bottom: 10px; line-height: 1.6; overflow-wrap: break-word; }
+.cook-flow b { color: var(--app-accent); }
+.cook-start-btn { font: inherit; font-size: 16px; font-weight: 800; letter-spacing: .08em; color: #fff; background: var(--accent-hot); border: 2px solid #fff; padding: 12px 22px; cursor: pointer; white-space: nowrap; }
+.cook-start-btn:hover:not(:disabled) { background: #ff4d9d; }
+.cook-start-btn:disabled { opacity: .4; cursor: default; }
+.tab-blurb { font-size: 12.5px; color: var(--app-dim); line-height: 1.6; margin-bottom: 10px; overflow-wrap: break-word; }
+#cook-controls { display: flex; flex-direction: column; gap: 4px; }
+#cook-controls fieldset label { font-size: 12.5px; }
+#cook-progress { margin: 6px 0 4px; }
+#cook-stage { background: var(--app-code-bg); display: flex; align-items: center; justify-content: center; overflow: hidden; padding: 12px; position: relative; }
+#cook-canvas { max-width: 100%; max-height: 100%; border-radius: 8px; }
+#cook-empty { position: absolute; font-size: 13px; color: var(--app-faint); text-align: center; padding: 20px; max-width: 420px; line-height: 1.6; }
+
+/* ---------- Cut tab ---------- */
+#tab-cut.active { display: grid; grid-template-columns: 300px 1fr; }
+#cut-main { display: flex; flex-direction: column; gap: 10px; }
+#cut-timeline { background: var(--app-code-bg); border: 1px solid var(--app-border); border-radius: 8px; padding: 10px; min-height: 90px; font-size: 12px; }
+.beat-row { display: flex; gap: 2px; margin-bottom: 6px; }
+.beat-tick { flex: 1; height: 8px; background: var(--app-surface-4); border-radius: 2px; }
+.beat-tick.on { background: var(--app-accent-2); }
+.clip-row { display: flex; gap: 3px; }
+.clip-seg { flex: 1; background: var(--app-track); border: 1px solid var(--app-track-border); border-radius: 5px; padding: 6px 4px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--app-text); font-size: 11.5px; text-align: center; }
+#cut-video { width: 100%; max-height: 52vh; background: #000; border-radius: 10px; }
+
+/* ---------- transport ---------- */
+#transport { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; padding: 9px 16px; background: var(--app-surface-2); border-top: 1px solid var(--app-border); }
+#time-current, #time-total { font-size: 12.5px; font-variant-numeric: tabular-nums; color: var(--app-text-3); min-width: 34px; text-align: center; }
+.bpm { font-size: 12.5px; color: var(--app-accent); font-variant-numeric: tabular-nums; min-width: 64px; }
+.track-name { font-size: 12.5px; color: var(--app-dim); max-width: 22vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.spacer { flex: 0 0 8px; }
+.rec-dot { color: #f87171; font-weight: 700; font-size: 13px; font-variant-numeric: tabular-nums; }
+.rec-dot.hidden { display: none; }
+
+/* ---------- v0.2.1 UI-study pass: chips, glass panels, export pills, layers ---------- */
+/* Look chips (Gradient Lab: looks as pill chips, not a text list). */
+.look-chip { font: inherit; font-size: 12.5px; font-weight: 600; letter-spacing: .04em; color: var(--app-text-2); background: var(--app-surface-3); border: 1.5px solid var(--app-border-strong); border-radius: 999px; padding: 7px 14px; cursor: pointer; text-align: left; backdrop-filter: blur(6px); }
+.look-chip:hover { border-color: var(--app-accent); }
+.look-chip[data-active="true"] { background: var(--app-track); border-color: var(--app-accent-2); color: var(--app-text); }
+/* Floating glass row under the lookbar: preset dropdowns + description. */
+.glass-row { position: absolute; left: 12px; top: 12px; z-index: 4; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; background: var(--app-surface); border: 1.5px solid var(--app-border-strong); border-radius: 12px; padding: 8px 12px; backdrop-filter: blur(8px); max-width: calc(100% - 420px); }
+.glass-row label { font-size: 11px; font-weight: 700; letter-spacing: .1em; color: var(--app-accent); gap: 8px; }
+.glass-row select { font: inherit; font-size: 12.5px; font-weight: 500; color: var(--app-text-2); background: var(--app-surface-3); border: 1px solid var(--app-border-strong); border-radius: 8px; padding: 6px 8px; max-width: 340px; }
+.look-desc { font-size: 12px; color: var(--app-dim); max-width: 300px; line-height: 1.4; }
+/* Export as the single prominent white pill (Gradient Lab pattern). */
+.export-pill { font: inherit; font-size: 13px; font-weight: 700; letter-spacing: .05em; color: var(--app-bg); background: #fff; border: none; border-radius: 999px; padding: 9px 18px; cursor: pointer; box-shadow: 0 2px 12px rgba(255, 255, 255, .25); }
+.export-pill:hover:not(:disabled) { background: var(--app-text); }
+.export-pill:disabled { opacity: .35; cursor: default; box-shadow: none; }
+/* Numeric value boxes paired with sliders (Dithr pattern). */
+.num-input { width: 64px; padding: 5px 8px !important; font-size: 12.5px !important; text-align: right; }
+.slider-row .num-input { flex: 0 0 auto; }
+/* Layer stack panel — floating glass over the canvas, Alembic model. */
+.glass-panel { position: absolute; right: 12px; top: 64px; z-index: 4; width: 360px; max-height: calc(100% - 230px); overflow-y: auto; background: var(--app-surface); border: 1.5px solid var(--app-border-strong); border-radius: 14px; padding: 12px; backdrop-filter: blur(10px); }
+.layers-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.layers-head .pane-title { margin-bottom: 0; }
+.layers-presets { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.layers-presets select { font: inherit; font-size: 12px; color: var(--app-text-2); background: var(--app-surface-3); border: 1px solid var(--app-border-strong); border-radius: 8px; padding: 6px 8px; max-width: 170px; }
+#layers-list { list-style: none; }
+#layers-list li { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 8px; font-size: 12.5px; cursor: pointer; border: 1px solid transparent; }
+#layers-list li:hover { background: var(--app-surface-4); }
+#layers-list li.selected { border-color: var(--app-accent-2); background: var(--app-track); }
+#layers-list li.off { opacity: .45; }
+#layers-list .layer-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#layers-list .layer-btn { font: inherit; font-size: 13px; color: var(--app-dim); background: none; border: none; cursor: pointer; padding: 2px 5px; border-radius: 5px; }
+#layers-list .layer-btn:hover { color: #fff; background: var(--app-border-strong); }
+#layers-empty { padding: 6px 2px 10px; }
+.layer-params { margin-top: 10px; border-top: 1px solid var(--app-border); padding-top: 10px; }
+.layer-params .slider-row { font-size: 12px; }
+.layer-params .param-desc { font-size: 11px; color: var(--app-faint); margin: -4px 0 6px 0; line-height: 1.4; }
+.blend-row { font-size: 12px; margin: 8px 0; }
+.blend-row select { font: inherit; font-size: 12px; color: var(--app-text-2); background: var(--app-surface-3); border: 1px solid var(--app-border-strong); border-radius: 8px; padding: 6px 8px; flex: 1; }
+/* Add-layer tile grid (Alembic: icon + label tiles, not a long menu). */
+.layer-tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 10px; }
+.layer-tile { font: inherit; text-align: left; background: var(--app-surface-3); border: 1.5px solid var(--app-border); border-radius: 12px; padding: 10px; cursor: pointer; color: var(--app-text); }
+.layer-tile:hover { border-color: var(--app-accent-2); }
+.layer-tile .tile-icon { font-size: 20px; display: block; margin-bottom: 4px; }
+.layer-tile .tile-label { font-size: 12.5px; font-weight: 700; display: block; }
+.layer-tile .tile-desc { font-size: 11px; color: var(--app-dim); line-height: 1.35; display: block; margin-top: 2px; }
+/* Command palette (Ctrl+K). */
+#palette-input { width: 100%; font-size: 14px; margin: 4px 0 10px; }
+.palette-list { max-height: 320px; overflow-y: auto; }
+.palette-item { padding: 8px 10px; border-radius: 8px; font-size: 13px; cursor: pointer; display: flex; justify-content: space-between; gap: 10px; color: var(--app-text); }
+.palette-item small { color: var(--app-dim); }
+.palette-item.sel { background: var(--app-track); color: var(--app-text); }
+/* Presentation mode (Gather sparseness): full-bleed canvas, one bottom strip. */
+body.presenting #tabbar, body.presenting #transport, body.presenting #lookbar,
+body.presenting #code-panel, body.presenting #layers-panel,
+body.presenting #look-options, body.presenting #empty, body.presenting #viz-card { display: none !important; }
+body.presenting #tab-visualize { position: fixed; inset: 0; z-index: 50; }
+.present-strip { position: absolute; left: 50%; transform: translateX(-50%); bottom: 14px; z-index: 6; display: flex; gap: 18px; align-items: center; background: var(--app-code-bg); border: 1px solid var(--app-border-strong); border-radius: 999px; padding: 7px 18px; font-size: 11px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--app-text-3); backdrop-filter: blur(8px); }
+.present-strip .present-keys { color: var(--app-faint); letter-spacing: .08em; text-transform: none; }
+/* Cook numbered workflow accordions (Geometric pattern: headers show live state). */
+.cook-step { border: 1px solid var(--app-border); border-radius: 10px; margin-bottom: 8px; overflow: hidden; }
+.cook-step-head { width: 100%; font: inherit; font-size: 13px; font-weight: 700; letter-spacing: .1em; color: var(--app-text-2); background: var(--app-surface); border: none; padding: 10px 12px; cursor: pointer; display: flex; gap: 10px; align-items: center; text-align: left; }
+.cook-step-head:hover { background: var(--app-surface-3); }
+.cook-step-num { color: var(--app-accent); font-size: 12px; }
+.cook-step-state { margin-left: auto; font-size: 11px; font-weight: 600; letter-spacing: .04em; color: var(--app-dim); text-transform: none; max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cook-step-state.done { color: #4ade80; }
+.cook-step-body { display: none; padding: 10px 12px 12px; }
+.cook-step.open .cook-step-body { display: block; }
+.cook-step.open .cook-step-head { border-bottom: 1px solid var(--app-border); }
+/* ASCII control sections (ASCII Magic pattern). */
+.control-section { font-size: 11px; font-weight: 700; letter-spacing: .16em; color: var(--app-faint); margin: 12px 0 2px; }
+.control-section:first-of-type { margin-top: 4px; }
+.ramp-row { flex-direction: column !important; align-items: flex-start !important; font-size: 11px !important; color: var(--app-dim) !important; line-height: 1.4; }
+.ramp-row input { width: 100%; font-size: 14px !important; letter-spacing: .1em; }
+#ascii-controls fieldset label { font-size: 12px; }
+#ascii-export-scale { font: inherit; font-size: 12.5px; color: var(--app-text-2); background: var(--app-surface-3); border: 1px solid var(--app-border-strong); border-radius: 8px; padding: 6px 8px; }
+
+/* ---------- Cook: style pass + depth step ---------- */
+.cook-style-row { flex-direction: column !important; align-items: flex-start !important; font-size: 11px !important; color: var(--app-dim) !important; line-height: 1.4; margin: 8px 0; }
+.cook-style-row select { width: 100%; font: inherit; font-size: 12.5px; color: var(--app-text-2); background: var(--app-surface-3); border: 1px solid var(--app-border-strong); border-radius: 8px; padding: 6px 8px; }
+#cook-depth-model { font: inherit; font-size: 12.5px; color: var(--app-text-2); background: var(--app-surface-3); border: 1px solid var(--app-border-strong); border-radius: 8px; padding: 6px 8px; max-width: 100%; }
+
+
+/* ---------- Mission Control ---------- */
+#tab-mission.active { display: grid; grid-template-columns: 1fr 380px; }
+#mc-main { display: flex; flex-direction: column; overflow-y: auto; }
+#mc-map { width: 100%; height: 300px; background: var(--app-code-bg); border: 1px solid var(--app-border); border-radius: 10px; }
+#mc-xray { display: flex; align-items: stretch; gap: 0; margin: 4px 0 12px; }
+.xray-stage { flex: 1; min-width: 0; background: var(--app-surface); border: 1.5px solid var(--app-border-strong); border-radius: 10px; padding: 9px 10px; }
+.xray-stage.live { border-color: var(--accent-hot); box-shadow: 0 0 14px rgba(255, 46, 136, .25); }
+.xray-name { font-size: 10px; font-weight: 700; letter-spacing: .12em; color: var(--app-faint); margin-bottom: 5px; }
+.xray-val { font-size: 14px; font-weight: 700; color: var(--app-text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.xray-sub { font-size: 11px; color: var(--app-dim); margin-top: 3px; line-height: 1.4; min-height: 28px; }
+.xray-flow { flex: 0 0 26px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; }
+.xray-flow i { width: 5px; height: 5px; border-radius: 50%; background: var(--app-accent-2); animation: flowdot 1.1s linear infinite; }
+.xray-flow i:nth-child(2) { animation-delay: .35s; }
+.xray-flow i:nth-child(3) { animation-delay: .7s; }
+@keyframes flowdot { 0% { opacity: .15; } 50% { opacity: 1; } 100% { opacity: .15; } }
+#mc-tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.mc-tile { background: var(--app-surface); border: 1px solid var(--app-border); border-radius: 10px; padding: 9px 10px; }
+.mc-tile .tile-k { font-size: 10px; font-weight: 700; letter-spacing: .12em; color: var(--app-faint); }
+.mc-tile .tile-v { font-size: 14px; font-weight: 700; color: var(--app-text-2); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mc-tile .tile-v.hot { color: var(--accent-hot-soft); }
+#mc-rail { display: flex; flex-direction: column; border-right: none; }
+#mc-code { flex: 0 0 auto; max-height: 260px; overflow-y: auto; background: var(--app-code-bg); border: 1px solid var(--app-border); border-radius: 8px; padding: 10px 12px; font-family: var(--font-mono); font-feature-settings: var(--font-features); font-size: 12px; line-height: 1.6; color: var(--app-text); white-space: pre-wrap; margin: 0 0 4px; }
+#mc-hex { flex: 1; min-height: 180px; overflow-y: auto; background: var(--app-code-bg); border: 1px solid var(--app-border); border-radius: 8px; padding: 8px 10px; font-family: var(--font-mono); font-size: 11.5px; line-height: 1.7; }
+
+/* ==========================================================================
+   v0.2.3 — hand-coded HTML / TUI skin (Mousiki model, "TUI with a mouse")
+   --------------------------------------------------------------------------
+   The whole app looks hand-built in raw HTML now, chrome included: square
+   corners everywhere, flat 2px borders, no glass blur, no rounded pills,
+   Paper Mono on every label including the Material components (the Material
+   tokens below re-skin them; no generic Material polish stays visible).
+   TUI rules, borrowed from Mousiki + the classic TUIs (btop, lazygit, k9s):
+   dense panels, box-drawing section headers (┌─ ─┤ └─), a status bar across
+   the top of the Visualize stage, keyboard shortcuts printed on screen with
+   a clickable twin for each one. Material components are still the app
+   shell underneath (tabs, buttons, dialogs) — they just don't look like it.
+   ========================================================================== */
+/* (v0.2.4: the Material tokens that lived here are gone — the app theme
+   variables in :root above are the only tokens now. Controls are native
+   HTML, styled in the "Hand-rolled native controls" section below.) */
+/* Square corners + hard borders on the app's own surfaces (no more pills,
+   no more glass). Backdrop blur is gone: TUI panels are solid. */
+.look-chip, .export-pill, .glass-row, .glass-panel, #code-panel, .present-strip,
+.pane, .log, .fmt-note, #hex-view, #mc-code, #mc-hex, #mc-map, .mc-tile,
+.xray-stage, .cook-step, #cut-timeline, .clip-seg, #glitch-preview-wrap,
+#play-spectrum, #play-waveform, .sys-hero, .sys-empty, .layer-tile,
+.palette-item, #lyrics .lrc-line, .cook-step-head, #ascii-canvas,
+#cook-canvas, #cut-video, #play-video, .overlay, #viz-status {
+  border-radius: 0 !important;
+}
+.glass-row, .glass-panel, .look-chip, .present-strip {
+  backdrop-filter: none;
+  background: var(--app-surface);
+  border: 2px solid var(--app-border-strong);
+}
+.glass-row { max-width: calc(100% - 444px - 384px); }
+.look-chip { padding: 5px 10px; font-size: 12px; background: var(--app-code-bg-2); }
+.export-pill { border: 2px solid var(--app-bg); }
+/* Pane titles get a terminal cursor marker (box-drawing lives in the HTML
+   headers for the Visualize rail / code / layers panels). */
+.pane > .pane-title::before { content: "▸ "; color: var(--accent-hot); }
+/* ---------- Visualize stage: TUI layout ---------- */
+/* The Toaster bar: status tag, app name, then the controls — source,
+   scenes, layers, card, cam, rec, strudel, export, present, help. It is
+   the tab's chrome and is always visible on this tab. */
+#viz-status {
+  position: absolute; top: 12px; left: 12px; right: 12px; z-index: 4;
+  display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+  background: var(--app-code-bg); border: 2px solid var(--app-border-strong); padding: 6px 10px;
+  font-size: 12px; font-weight: 700; color: var(--app-text-2);
+  overflow: hidden;
+}
+#viz-status .paper-btn { height: 28px; padding: 0 10px; font-size: 12px; }
+#viz-status-tag { color: var(--app-faint); }
+#viz-status-tag.live { color: #4ade80; }
+#viz-status .appname { color: var(--app-accent); letter-spacing: .1em; white-space: nowrap; }
+#viz-status .spacer { flex: 1; }
+#viz-status span:empty { display: none; }
+#viz-status-track { color: #fff; max-width: 30%; overflow: hidden; text-overflow: ellipsis; }
+#viz-status #viz-layers { color: var(--app-accent-soft); }
+.status-sep { color: var(--app-border-strong); }
+.status-keys { margin-left: auto; display: flex; gap: 6px; }
+/* The Toaster bar owns the top row now; options sit under it (to the
+   right of the code column), layers on the right. */
+.glass-row { top: 64px; left: 444px; }
+.glass-panel { top: 64px; }
+/* Scenes rail: box-drawing headers, dense chips, two families. */
+.rail-head, .rail-group, .rail-foot {
+  font-size: 11px; font-weight: 700; letter-spacing: .08em; color: var(--app-accent);
+  white-space: nowrap;
+}
+.rail-group { color: var(--app-faint); margin-top: 8px; }
+.rail-foot { color: var(--app-outline); margin-top: 8px; }
+/* Live code: the scene line is the star (hot pink), Strudel keywords sky,
+   comments and muted lines dim — a TUI cursor line, not a grey box. */
+#code-panel { border-width: 2px; }
+#code-lines .tok-scene { color: #ff2e88; font-weight: 800; }
+#code-lines .tok-kw { color: var(--app-accent); font-weight: 700; }
+#code-lines .tok-com { color: var(--app-outline); }
+#code-lines .tok-dim { color: var(--app-outline); }
+/* Chrome: flat, square, hard-bordered — tab bar + transport read as a TUI
+   frame, not a component library. */
+#tabbar { border-bottom: 2px solid var(--app-border); }
+#transport { border-top: 2px solid var(--app-border); }
+#tabbar .brand { letter-spacing: .3em; }
+/* Presentation mode hides the status bar with the rest of the chrome. */
+body.presenting #viz-status { display: none !important; }
+
+
+/* v0.2.3 fix #2 — measured overflow at the 1360 px default window:
+   - the SCENES rail (13 chips + 3 headers) is taller than its box, so the
+     TOASTER family fell below the fold; densify it and give it more room.
+   - the tab bar / transport / viz-actions rows each ran ~40 px past the
+     right edge: flex children refused to shrink (min-width: auto) and the
+     status text ate space. Let the tabs and the seek slider shrink, cap the
+     actions row so it wraps instead of clipping, and hide the "sys audio"
+     status text on narrower windows. */
+
+.look-chip { padding: 3px 9px; }
+.rail-head, .rail-group, .rail-foot { font-size: 10.5px; }
+
+#tabs { min-width: 0; }
+#tabbar { gap: 10px; }
+.tab-actions { flex: 0 0 auto; gap: 6px; }
+#seek { min-width: 0; }
+#viz-actions { max-width: calc(100% - 24px); }
+@media (max-width: 1400px) {
+  .sys-status { display: none; }
+}
+
+/* v0.2.4: all buttons are native .paper-btn buttons with a real solid
+   container (theme variables), matching the scene chips and the
+   hand-coded HTML direction. No transparent buttons over the canvas. */
+.paper-btn {
+  font: inherit; font-size: 13px; font-weight: 600; letter-spacing: .04em;
+  color: var(--app-text-2); background: var(--app-surface-3);
+  border: 1.5px solid var(--app-border-strong); border-radius: 0;
+  height: 40px; padding: 0 18px; cursor: pointer; white-space: nowrap;
+}
+.paper-btn:hover { background: var(--app-surface-4); border-color: var(--accent-hot-soft); }
+.paper-btn:focus-visible { outline: 2px solid var(--accent-hot-soft); outline-offset: 2px; }
+/* (fix #3 rules — rail density + tab-bar fit, see the v0.2.3 skin section) */
+
+.look-chip { padding: 2px 9px; font-size: 11.5px; }
+
+#tabbar .brand { letter-spacing: .18em; font-size: 15px; }
+.paper-tab { font-size: 13px; }
+@media (max-width: 1400px) {
+  #btn-help { display: none; }
+  /* ⌘K is a duplicate of Ctrl+K (and the status bar's [^K] hint) — hide it
+     on narrower windows so the tab bar fits. */
+  #btn-palette { display: none; }
+}

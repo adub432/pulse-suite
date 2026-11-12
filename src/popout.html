@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pulse Suite — Panel</title>
+<link rel="stylesheet" href="styles.css">
+<script type="importmap">
+{
+  "imports": {
+    "@material/web/": "../node_modules/@material/web/",
+    "lit": "../node_modules/lit/index.js",
+    "lit/": "../node_modules/lit/",
+    "lit-html": "../node_modules/lit-html/lit-html.js",
+    "lit-html/": "../node_modules/lit-html/",
+    "lit-element": "../node_modules/lit-element/lit-element.js",
+    "lit-element/": "../node_modules/lit-element/",
+    "@lit/reactive-element": "../node_modules/@lit/reactive-element/reactive-element.js",
+    "@lit/reactive-element/": "../node_modules/@lit/reactive-element/",
+    "@lit/context": "../node_modules/@lit/context/index.js",
+    "@lit/context/": "../node_modules/@lit/context/",
+    "tslib": "../node_modules/tslib/tslib.es6.js"
+  }
+}
+</script>
+<script type="module" src="material.js"></script>
+<style>
+  body { overflow: auto; }
+  #pop { display: flex; flex-direction: column; height: 100vh; padding: 12px; gap: 10px; }
+  .pop-head { display: flex; align-items: center; gap: 10px; }
+  .pop-head .pane-title { margin: 0; flex: 1; }
+  .pop-status { font-size: 12px; color: #94a3b8; }
+  #pop-code { flex: 1; min-height: 140px; overflow-y: auto; background: #05070f; border: 1px solid #1e293b; border-radius: 8px; padding: 10px 12px; font-family: var(--font-mono); font-feature-settings: var(--font-features); font-size: 12.5px; line-height: 1.65; color: #dbeafe; white-space: pre-wrap; margin: 0; }
+  #pop-fx { width: 100%; min-height: 74px; font: inherit; font-size: 12.5px; color: #e2e8f0; background: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 8px 10px; resize: vertical; }
+  #pop-fx.bad { border-color: #f87171; }
+  #pop-custom { width: 100%; min-height: 56px; font: inherit; font-size: 12.5px; color: #e2e8f0; background: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 8px 10px; resize: vertical; }
+  .pop-label { font-size: 11px; font-weight: 700; letter-spacing: .14em; color: #7dd3fc; }
+  #pop-hex { flex: 1; min-height: 180px; overflow-y: auto; background: #05070f; border: 1px solid #1e293b; border-radius: 8px; padding: 8px 10px; font-family: var(--font-mono); font-size: 12px; line-height: 1.7; user-select: none; }
+  .hex-nav { display: flex; gap: 8px; align-items: center; font-size: 12px; color: #94a3b8; flex-wrap: wrap; }
+  .hex-nav input { width: 90px; }
+  #pop-hex-edit { width: 70px; }
+</style>
+</head>
+<body>
+<div id="pop">
+  <div class="pop-head">
+    <span class="pane-title" id="pop-title">PANEL</span>
+    <span class="pop-status" id="pop-status">live — synced with the main window</span>
+    <md-outlined-button id="btn-pop-dock" title="Return this panel to the main window">⬅ Dock back</md-outlined-button>
+  </div>
+  <div id="pop-code-wrap" hidden>
+    <pre id="pop-code">// Waiting for the engine… play a track or press LISTEN TO MY PC.</pre>
+    <div class="pop-label">FX PARAMS — edit this JSON, it applies live to the running effects</div>
+    <textarea id="pop-fx" spellcheck="false">{
+  "look": "studio",
+  "theme": "sky"
+}</textarea>
+    <div class="pop-label">CUSTOM STRUDEL LINES — appended to the live-generated program</div>
+    <textarea id="pop-custom" spellcheck="false" placeholder="// your own Strudel lines, e.g.&#10;// s(&quot;bd sd&quot;).room(0.4)"></textarea>
+  </div>
+  <div id="pop-hex-wrap" hidden style="display:flex;flex-direction:column;flex:1;gap:10px;min-height:0">
+    <div id="pop-hex">No file loaded in the Glitch tab yet — open a file to corrupt and its bytes will show up here, live.</div>
+    <div class="hex-nav">
+      <md-text-button id="pop-hex-prev">◀ Prev</md-text-button>
+      <span id="pop-hex-offset">offset 0x00000000</span>
+      <md-text-button id="pop-hex-next">Next ▶</md-text-button>
+      <label>Edit byte <input id="pop-hex-edit" type="text" placeholder="ff" size="4" maxlength="2"></label>
+      <span class="pop-status" id="pop-hex-sel">no selection — double-click a byte to edit it</span>
+    </div>
+  </div>
+</div>
+<script src="popout.js"></script>
+</body>
+</html>

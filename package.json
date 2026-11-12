@@ -1,0 +1,54 @@
+{
+  "author": "Austin",
+  "build": {
+    "appId": "com.austin.pulse",
+    "copyright": "Copyright © 2026 Austin",
+    "files": [
+      "main.js",
+      "preload.js",
+      "src/**/*",
+      "package.json",
+      "node_modules/@tonejs/midi/**/*",
+      "!node_modules/onnxruntime-web/**/*",
+      "node_modules/onnxruntime-web/dist/ort.node.min.js",
+      "node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.mjs",
+      "node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm",
+      "node_modules/onnxruntime-web/package.json",
+      "LICENSES/**/*",
+      "THIRD-PARTY-NOTICES.md"
+    ],
+    "asarUnpack": [
+      "node_modules/onnxruntime-web/dist/ort.node.min.js",
+      "node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.mjs",
+      "node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm"
+    ],
+    "mac": {
+      "category": "public.app-category.music",
+      "target": "dmg"
+    },
+    "productName": "Pulse Suite",
+    "win": {
+      "target": "portable"
+    }
+  },
+  "dependencies": {
+    "@tonejs/midi": "^2.0.28",
+    "gif.js": "^0.2.0",
+    "onnxruntime-web": "^1.31.1"
+  },
+  "description": "Pulse Suite — an all-in-one desktop media studio: Mousiki-style player, Oto-style visualizer, real byte-level glitch lab with hex editor, live ASCII video, and a beat-cut auto-editor.",
+  "devDependencies": {
+    "electron": "^45.3.0",
+    "electron-builder": "^26.18.0"
+  },
+  "license": "MIT",
+  "main": "main.js",
+  "name": "pulse-visualizer",
+  "scripts": {
+    "dist": "electron-builder --win portable --mac dmg",
+    "dist:mac": "electron-builder --mac dmg --x64 --arm64",
+    "dist:win": "electron-builder --win portable --x64",
+    "start": "electron ."
+  },
+  "version": "0.2.4"
+}
