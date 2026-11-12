@@ -10,7 +10,7 @@
 <div id="app">
 
   <header id="tabbar">
-    <div class="brand">PULSE <span>SUITE</span> <em>v0.2.5</em></div>
+    <div class="brand">PULSE <span>SUITE</span> <em>v0.2.6</em></div>
     <nav id="tabs" aria-label="Pulse Suite tabs — the pipeline, left to right: Play → Visualize → Glitch → ASCII → Cut → Cook" title="Pipeline: Play → Visualize → Glitch → ASCII → Cut → Cook">
       <button class="paper-tab" data-tab="play" aria-label="Play tab">▶ Play</button>
       <button class="paper-tab" data-tab="visualize" aria-label="Visualize tab">Visualize</button>
@@ -18,7 +18,6 @@
       <button class="paper-tab" data-tab="ascii" aria-label="ASCII tab">ASCII</button>
       <button class="paper-tab" data-tab="cut" aria-label="Cut tab">Cut</button>
       <button class="paper-tab" data-tab="cook" aria-label="Cook tab">🍳 Cook</button>
-      <button class="paper-tab" data-tab="mission" aria-label="Mission Control tab">Mission Control</button>
     </nav>
     <div class="tab-actions">
       <span id="sysaudio-status" class="sys-status" title="System audio capture (Toaster-style: hear whatever is playing on your PC)">sys audio: off</span>
@@ -52,7 +51,7 @@
          The tab never scrolls as a page — each panel scrolls inside its
          own box, sized to the window like Mousiki's clamp_output_rows. -->
     <section id="tab-play" class="panel active">
-      <div id="play-top">
+      <div id="play-top" data-layout-panel="play-top">
         <div id="now-playing">
           <div id="np-title">No track loaded</div>
           <div id="np-meta">Open audio or video — or press System Audio to hear whatever is playing on your PC.</div>
@@ -76,13 +75,13 @@
         <span id="sysaudio-msg" class="sys-msg"></span>
       </div>
       <div id="sysaudio-empty" class="sys-empty">No track loaded — press <b>LISTEN TO MY PC</b> and play anything on your PC. The visuals, the ASCII cam and the code panel will all follow it.</div>
-      <div id="play-viz">
+      <div id="play-viz" data-layout-panel="play-viz">
         <video id="play-video" class="hidden" muted playsinline></video>
-        <canvas id="play-spectrum" height="140"></canvas>
-        <canvas id="play-waveform" height="90"></canvas>
+        <canvas id="play-spectrum" height="140" data-module="spectrum" data-module-name="Spectrum analyzer"></canvas>
+        <canvas id="play-waveform" height="90" data-module="waveform" data-module-name="Waveform"></canvas>
       </div>
       <div id="play-panels">
-        <aside id="library-pane" class="pane">
+        <aside id="library-pane" class="pane" data-module="library" data-module-name="Library" data-layout-panel="library-pane">
           <div class="pane-title">LIBRARY <span id="library-count" class="sys-msg"></span></div>
           <div class="pane-actions">
             <button class="paper-btn" id="btn-library-folder">Browse folder…</button>
@@ -91,7 +90,7 @@
           <ol id="library-list"></ol>
           <div class="pane-note">Click a track to play it · ↑/↓ move · a = add to queue</div>
         </aside>
-        <aside id="playlist-pane" class="pane">
+        <aside id="playlist-pane" class="pane" data-module="queue" data-module-name="Queue" data-layout-panel="playlist-pane">
           <div class="pane-title">QUEUE <span id="queue-count"></span></div>
           <div class="pane-actions">
             <button class="paper-btn" id="btn-shuffle" aria-pressed="false" title="Shuffle (m)">Shuffle</button>
@@ -100,11 +99,48 @@
           <ol id="playlist"></ol>
           <div class="pane-note">Keyboard: ↑/↓ move · Enter play · n/b next/prev · p play/pause · / filter</div>
         </aside>
-        <aside id="lyrics-pane" class="pane">
+        <aside id="lyrics-pane" class="pane" data-module="lyrics" data-module-name="Lyrics" data-layout-panel="lyrics-pane">
           <div class="pane-title">LYRICS <span id="lyrics-src"></span></div>
           <div id="lyrics">No synced lyrics — drop a <b>.lrc</b> file next to the track (same name) and it will light up line by line as it plays.</div>
         </aside>
       </div>
+    <!-- ============ MISSION CONTROL, folded into Play (v0.2.6) ============
+         The live map, pipeline x-ray, stat tiles, live code + live hex
+         live here now, under the Mousiki player — one tab, one track. -->
+    <div id="play-mc">
+      <div id="play-mc-head">
+        <span class="pane-title">MISSION CONTROL — LIVE</span>
+        <span class="sys-msg">the song, as it travels through the app</span>
+        <button class="paper-btn paper-btn-text" id="btn-mc-collapse" title="Collapse Mission Control">▾ Collapse</button>
+      </div>
+      <div id="mc-main" data-layout-panel="mc-main" class="pane" data-module="live-map" data-module-name="Live map">
+        <div class="pane-title">LIVE MAP — THE MUSIC, AS BLIPS <span id="mc-map-count" class="sys-msg"></span></div>
+        <canvas id="mc-map"></canvas>
+        <div class="pane-title" style="margin-top:12px">PIPELINE X-RAY — WATCH THE SONG TRAVEL THROUGH THE APP</div>
+        <div id="mc-xray">
+          <div class="xray-stage" data-stage="source"><div class="xray-name">SOURCE</div><div class="xray-val" id="xray-source">—</div><div class="xray-sub" id="xray-source-sub">no audio source</div></div>
+          <div class="xray-flow"><i></i><i></i><i></i></div>
+          <div class="xray-stage" data-stage="decode"><div class="xray-name">DECODE</div><div class="xray-val" id="xray-decode">—</div><div class="xray-sub" id="xray-decode-sub">—</div></div>
+          <div class="xray-flow"><i></i><i></i><i></i></div>
+          <div class="xray-stage" data-stage="fft"><div class="xray-name">FFT</div><div class="xray-val" id="xray-fft">—</div><div class="xray-sub" id="xray-fft-sub">—</div></div>
+          <div class="xray-flow"><i></i><i></i><i></i></div>
+          <div class="xray-stage" data-stage="detect"><div class="xray-name">BEAT / BASS / CHORD / KEY</div><div class="xray-val" id="xray-detect">—</div><div class="xray-sub" id="xray-detect-sub">—</div></div>
+          <div class="xray-flow"><i></i><i></i><i></i></div>
+          <div class="xray-stage" data-stage="layers"><div class="xray-name">EFFECT LAYERS</div><div class="xray-val" id="xray-layers">—</div><div class="xray-sub" id="xray-layers-sub">—</div></div>
+          <div class="xray-flow"><i></i><i></i><i></i></div>
+          <div class="xray-stage" data-stage="output"><div class="xray-name">OUTPUT</div><div class="xray-val" id="xray-output">—</div><div class="xray-sub" id="xray-output-sub">—</div></div>
+        </div>
+        <div id="mc-tiles"></div>
+      </div>
+      <div id="mc-rail" data-layout-panel="mc-rail" class="pane" data-module="live-hex" data-module-name="Live hex">
+        <div class="pane-title">LIVE CODE <span id="mc-code-status" class="sys-msg"></span></div>
+        <pre id="mc-code">// The engine is listening — play a track or press LISTEN TO MY PC.</pre>
+        <div class="pane-title" style="margin-top:12px">LIVE HEX — WORKING COPY <span class="sys-msg" id="mc-hex-file"></span></div>
+        <div id="mc-hex">No file loaded in the Glitch tab yet — open a file to corrupt and watch its bytes change here as the audio corrupts them.</div>
+        <div class="pane-actions"><button class="paper-btn" id="btn-mc-hex-open">Open in Glitch tab</button></div>
+        <div class="pane-note">The hex view works on a COPY in the temp folder — the original is never touched. Turn on AUDIO CORRUPT in the Glitch tab and the bytes here change on every kick.</div>
+      </div>
+    </div>
       <div id="play-status" class="status-line">
         <span id="play-status-text">No track — open audio or listen to your PC.</span>
         <span class="status-keys">p play · n/b next/prev · m shuffle · r repeat · / filter · TAB panels</span>
@@ -141,6 +177,7 @@
         <button class="paper-btn" id="btn-viz-strudel" title="Open this code in Strudel (O)">strudel ↗</button>
         <button class="paper-btn" id="btn-viz-export" title="Snapshot the current frame as a PNG (Ctrl+S)">⬇ PNG</button>
         <button class="paper-btn" id="btn-present" title="Presentation mode — full-bleed canvas, no chrome (F)">present</button>
+        <button class="paper-btn" id="btn-viz-fullscreen" title="Fullscreen visualization — the stage fills the screen, panels drag on top (Shift+F)">⛶ fullscreen</button>
         <button class="paper-btn" id="btn-viz-help" title="Keys and how it works (?)">?</button>
       </div>
       <!-- Source menu (Toaster's S key): what the engine listens to. -->
@@ -241,7 +278,7 @@
       <!-- (viz-actions folded into the Toaster bar above: source, export, present) -->
       <!-- EFFECT LAYERS — the Alembic Shader Lab model: stackable layers, add /
            reorder / tune / save as a preset. Layers run over the look above. -->
-      <div id="layers-panel" class="glass-panel">
+      <div id="layers-panel" class="glass-panel" data-layout-panel="layers-panel" data-module="layers-panel" data-module-name="Effect layers">
         <div class="layers-head">
           <span class="pane-title">┌─ EFFECT LAYERS <span id="layers-count" class="sys-msg"></span></span>
           <span class="layers-presets">
@@ -287,7 +324,7 @@
         <span id="present-info"></span>
         <span class="present-keys">SPACE play · 1–9 looks · F exit</span>
       </div>
-      <div id="code-panel">
+      <div id="code-panel" data-layout-panel="code-panel" data-module="code-panel" data-module-name="Live code">
         <div class="code-head">
           <span class="code-title">┌─ LIVE CODE <span id="code-status">— waiting for sound</span></span>
           <span class="code-actions">
@@ -304,7 +341,7 @@
 
     <!-- ============ GLITCH (real byte-level corruption + hex editor + shader lab) ============ -->
     <section id="tab-glitch" class="panel">
-      <div id="glitch-left" class="pane">
+      <div id="glitch-left" data-layout-panel="glitch-left" class="pane" data-module="hex-editor" data-module-name="Hex editor">
         <div class="pane-title">HEX EDITOR — <span id="glitch-file">no file loaded</span></div>
         <div class="pane-actions">
           <button class="paper-btn paper-btn-primary" id="btn-glitch-open">Open file to corrupt</button>
@@ -322,7 +359,7 @@
         </div>
         <div id="glitch-selection" class="sel-info">Selection: none — click bytes in the hex view to select a range.</div>
       </div>
-      <div id="glitch-right" class="pane">
+      <div id="glitch-right" data-layout-panel="glitch-right" class="pane" data-module="corruption" data-module-name="Corruption">
         <div class="pane-title">CORRUPTION</div>
         <progress class="paper-progress hidden" id="glitch-progress" indeterminate max="1"></progress>
         <div class="glitch-controls">
@@ -367,7 +404,7 @@
 
     <!-- ============ ASCII (live ASCII video) ============ -->
     <section id="tab-ascii" class="panel">
-      <div id="ascii-controls" class="pane">
+      <div id="ascii-controls" data-layout-panel="ascii-controls" class="pane" data-module="ascii-controls" data-module-name="ASCII controls">
         <div class="pane-title">ASCII VIDEO</div>
         <div class="control-section">/SOURCE</div>
         <div class="pane-actions">
@@ -480,13 +517,13 @@
         </div>
         <div id="ascii-status" class="sys-msg">No source yet. Webcam needs camera permission; video file plays from disk.</div>
       </div>
-      <div id="ascii-stage"><canvas id="ascii-canvas"></canvas></div>
+      <div id="ascii-stage" data-layout-panel="ascii-stage" data-module="ascii-stage" data-module-name="ASCII stage"><canvas id="ascii-canvas"></canvas></div>
       <video id="ascii-video" class="hidden" muted loop playsinline></video>
     </section>
 
     <!-- ============ CUT (beat-cut auto-edit) ============ -->
     <section id="tab-cut" class="panel">
-      <div id="cut-controls" class="pane">
+      <div id="cut-controls" data-layout-panel="cut-controls" class="pane" data-module="cut-controls" data-module-name="Beat-cut controls">
         <div class="pane-title">BEAT-CUT AUTO-EDIT</div>
         <div class="tab-blurb">BEAT-CUT — chop a folder of clips to the beat of the shared track. Same song as every other tab; the cuts land on its beats.</div>
         <progress class="paper-progress hidden" id="cut-progress" indeterminate max="1"></progress>
@@ -502,7 +539,7 @@
         </div>
         <div id="cut-stats" class="sys-msg"></div>
       </div>
-      <div id="cut-main" class="pane">
+      <div id="cut-main" data-layout-panel="cut-main" class="pane" data-module="cut-timeline" data-module-name="Timeline">
         <div class="pane-title">TIMELINE</div>
         <div id="cut-timeline"></div>
         <video id="cut-video" controls muted playsinline></video>
@@ -515,7 +552,7 @@
 
     <!-- ============ COOK (photo + song: the image cooks cumulatively on the audio) ============ -->
     <section id="tab-cook" class="panel">
-      <div id="cook-controls" class="pane">
+      <div id="cook-controls" data-layout-panel="cook-controls" class="pane" data-module="cook-modules" data-module-name="Cook modules">
         <div class="pane-title">COOK — PHOTO + SONG</div>
         <!-- The flow, left → right, top → bottom: pick photo → pick song
              (the shared track) → START COOKING → export JPEG. The start
@@ -565,6 +602,14 @@
               <label><input type="checkbox" class="paper-switch cook-fx" id="cook-fx-halftone"> Halftone — print dots over the image</label>
               <label><input type="checkbox" class="paper-switch cook-fx" id="cook-fx-geo"> Geometric shapes — the photo re-drawn as triangles</label>
               <label><input type="checkbox" class="paper-switch cook-fx" id="cook-fx-mesh"> Mesh tint — a gradient wash that follows the bass</label>
+              <label><input type="checkbox" class="paper-switch cook-fx" id="cook-fx-wave"> Wave warp — the photo ripples like water, amplitude follows the bass</label>
+              <label><input type="checkbox" class="paper-switch cook-fx" id="cook-fx-mirror"> Mirror — the photo mirrors itself, axis flips on the kick</label>
+              <label><input type="checkbox" class="paper-switch cook-fx" id="cook-fx-chroma"> Chromatic split — red/cyan channels pull apart with the bass</label>
+              <label><input type="checkbox" class="paper-switch cook-fx" id="cook-fx-swirl"> Swirl — the centre twists with the kick</label>
+              <label><input type="checkbox" class="paper-switch cook-fx" id="cook-fx-slitscan"> Slit-scan — a vertical slice scrolls with the beat</label>
+              <label><input type="checkbox" class="paper-switch cook-fx" id="cook-fx-posterize"> Posterize — flat colour bands, steps follow the level</label>
+              <label><input type="checkbox" class="paper-switch cook-fx" id="cook-fx-solarize"> Solarize — brights invert past a threshold that rides the level</label>
+              <label><input type="checkbox" class="paper-switch cook-fx" id="cook-fx-vignette"> Vignette burn — the edges darken as the level rises</label>
             </fieldset>
             <label class="cook-style-row">Style pass — re-render the photo in a style from the ASCII library, baked in as it cooks
               <select id="cook-style">
@@ -621,42 +666,12 @@
           </div>
         </div>
       </div>
-      <div id="cook-stage">
+      <div id="cook-stage" data-layout-panel="cook-stage" data-module="cook-stage" data-module-name="Cook stage">
         <canvas id="cook-canvas"></canvas>
         <div id="cook-empty">No photo loaded yet — pick a JPG or PNG and a song, and the photo will cook on the music.</div>
       </div>
     </section>
 
-    <!-- ============ MISSION CONTROL — everything at once: live map, pipeline x-ray, live code + live hex ============ -->
-    <section id="tab-mission" class="panel">
-      <div id="mc-main" class="pane">
-        <div class="pane-title">LIVE MAP — THE MUSIC, AS BLIPS <span id="mc-map-count" class="sys-msg"></span></div>
-        <canvas id="mc-map"></canvas>
-        <div class="pane-title" style="margin-top:12px">PIPELINE X-RAY — WATCH THE SONG TRAVEL THROUGH THE APP</div>
-        <div id="mc-xray">
-          <div class="xray-stage" data-stage="source"><div class="xray-name">SOURCE</div><div class="xray-val" id="xray-source">—</div><div class="xray-sub" id="xray-source-sub">no audio source</div></div>
-          <div class="xray-flow"><i></i><i></i><i></i></div>
-          <div class="xray-stage" data-stage="decode"><div class="xray-name">DECODE</div><div class="xray-val" id="xray-decode">—</div><div class="xray-sub" id="xray-decode-sub">—</div></div>
-          <div class="xray-flow"><i></i><i></i><i></i></div>
-          <div class="xray-stage" data-stage="fft"><div class="xray-name">FFT</div><div class="xray-val" id="xray-fft">—</div><div class="xray-sub" id="xray-fft-sub">—</div></div>
-          <div class="xray-flow"><i></i><i></i><i></i></div>
-          <div class="xray-stage" data-stage="detect"><div class="xray-name">BEAT / BASS / CHORD / KEY</div><div class="xray-val" id="xray-detect">—</div><div class="xray-sub" id="xray-detect-sub">—</div></div>
-          <div class="xray-flow"><i></i><i></i><i></i></div>
-          <div class="xray-stage" data-stage="layers"><div class="xray-name">EFFECT LAYERS</div><div class="xray-val" id="xray-layers">—</div><div class="xray-sub" id="xray-layers-sub">—</div></div>
-          <div class="xray-flow"><i></i><i></i><i></i></div>
-          <div class="xray-stage" data-stage="output"><div class="xray-name">OUTPUT</div><div class="xray-val" id="xray-output">—</div><div class="xray-sub" id="xray-output-sub">—</div></div>
-        </div>
-        <div id="mc-tiles"></div>
-      </div>
-      <div id="mc-rail" class="pane">
-        <div class="pane-title">LIVE CODE <span id="mc-code-status" class="sys-msg"></span></div>
-        <pre id="mc-code">// The engine is listening — play a track or press LISTEN TO MY PC.</pre>
-        <div class="pane-title" style="margin-top:12px">LIVE HEX — WORKING COPY <span class="sys-msg" id="mc-hex-file"></span></div>
-        <div id="mc-hex">No file loaded in the Glitch tab yet — open a file to corrupt and watch its bytes change here as the audio corrupts them.</div>
-        <div class="pane-actions"><button class="paper-btn" id="btn-mc-hex-open">Open in Glitch tab</button></div>
-        <div class="pane-note">The hex view works on a COPY in the temp folder — the original is never touched. Turn on AUDIO CORRUPT in the Glitch tab and the bytes here change on every kick.</div>
-      </div>
-    </section>
 
   </main>
 
@@ -706,8 +721,10 @@
   <div class="dlg-body">
     <p><b>Space / p</b> — play / pause &nbsp;·&nbsp; <b>n / b</b> — next / previous track</p>
     <p><b>m</b> — shuffle &nbsp;·&nbsp; <b>r</b> — cycle repeat</p>
-    <p><b>Ctrl+1…7</b> — switch tabs &nbsp;·&nbsp; <b>1…9, 0</b> — looks (Visualize tab; 0 = Depth)</p>
+    <p><b>Ctrl+1…6</b> — switch tabs &nbsp;·&nbsp; <b>1…9, 0</b> — looks (Visualize tab; 0 = Depth)</p>
     <p><b>Ctrl+K</b> — command palette &nbsp;·&nbsp; <b>F</b> — presentation mode (Visualize)</p>
+    <p><b>Shift+F</b> — fullscreen visualization (Visualize) &nbsp;·&nbsp; <b>Esc</b> — exit fullscreen / presentation</p>
+    <p><b>Right-click a panel</b> — edit the module / hide it &nbsp;·&nbsp; <b>drag ⋮⋮</b> — move panels &nbsp;·&nbsp; <b>corner grip</b> — resize</p>
     <p><b>Ctrl+Shift+C</b> — pop out live code editor &nbsp;·&nbsp; <b>Ctrl+Shift+H</b> — pop out hex editor</p>
     <p><b>Ctrl+O</b> — open media &nbsp;·&nbsp; <b>Ctrl+M</b> — open MIDI</p>
     <p><b>Ctrl+R</b> — record video &nbsp;·&nbsp; <b>Ctrl+S</b> — snapshot PNG</p>
@@ -718,12 +735,25 @@
   </div>
 </dialog>
 
+<dialog class="paper-dialog" id="module-dialog">
+  <div class="dlg-head" id="module-dialog-title">Module</div>
+  <div class="dlg-body" id="module-dialog-body"></div>
+  <div class="dlg-actions">
+    <button class="paper-btn" id="btn-module-reset">Reset this module</button>
+    <button class="paper-btn paper-btn-text" id="btn-module-close">Close</button>
+  </div>
+</dialog>
+
+<div class="paper-menu" id="module-menu" hidden></div>
+
 <script src="assets/gif/gif.js"></script>
 <script src="analysis.js"></script>
 <script src="codegen.js"></script>
 <script src="ascii-styles.js"></script>
 <script src="depth.js"></script>
 <script src="audio-engine.js"></script>
+<script src="layout.js"></script>
+<script src="scenes-026.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

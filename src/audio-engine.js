@@ -65,7 +65,10 @@ function createAudioEngine(state, hooks) {
         }
       });
       state.analyser = state.audioCtx.createAnalyser();
-      state.analyser.fftSize = 2048;
+      // v0.2.6: 4096-pt FFT (was 2048) — 11.7 Hz bins at 48 kHz instead of
+      // 23.4 Hz, so the spectrum, the 32 bands and the chroma all get finer
+      // frequency resolution. Still cheap: one extra FFT per frame.
+      state.analyser.fftSize = 4096;
       state.analyser.smoothingTimeConstant = 0.82;
       // Slow analyser for the chroma (Toaster's fast/mid/slow architecture):
       // 8192 FFT gives 5.86 Hz bins at 48 kHz, so a 55 Hz bass note stops
@@ -408,7 +411,10 @@ function createAudioEngine(state, hooks) {
         // v0.2.5: the context's own state is the 0.2.4 diagnosis — a
         // 'suspended'/'interrupted' context freezes the clock at 0:00.
         contextState: state.audioCtx ? state.audioCtx.state : 'none',
-        audioBlocked: !!state.audioBlocked
+        audioBlocked: !!state.audioBlocked,
+        // v0.2.6: hi-res analysis proof for the smoke test.
+        fftSize: state.analyser ? state.analyser.fftSize : 0,
+        spectrumBands: 64
       };
     }
   };

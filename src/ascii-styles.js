@@ -38,6 +38,13 @@ const ASCII_PALETTES = {
       [255, 180, 0], [0, 169, 144], [118, 91, 167]
     ]
   },
+  // v0.2.6: ember / magenta / amber — the mesh-scene Sunset palette, for ASCII.
+  sunset: {
+    label: 'Sunset', colors: [
+      [0, 0, 0], [43, 10, 61], [124, 45, 18], [245, 158, 11],
+      [251, 113, 133], [192, 132, 252], [255, 247, 237]
+    ]
+  },
   custom: { label: 'Custom', colors: [[0, 0, 0], [40, 40, 60], [125, 211, 252], [255, 255, 255]] }
 };
 /* Nearest palette colour, luminance-weighted distance. */
@@ -522,5 +529,17 @@ const ASCII_RECIPES = [
   { name: 'C64 Pixel', style: 'pixel', palette: 'c64', ditherAlgo: 'floyd-steinberg', cols: 96, ramp: ' .:-=+*#%@', color: true, invert: false, reactive: true, postFx: ['scanlines'] },
   { name: 'Atkinson Mono', style: 'dither', palette: 'bw', ditherAlgo: 'atkinson', cols: 130, ramp: ' .:-=+*#%@', color: false, invert: false, reactive: true, postFx: ['grain', 'dust'] },
   { name: 'LED Wall', style: 'led', palette: 'pico8', ditherAlgo: 'floyd-steinberg', cols: 90, ramp: ' .:-=+*#%@', color: true, invert: false, reactive: true, postFx: ['bloom', 'vignette'] },
-  { name: 'Mosaic Tiles', style: 'mosaic', palette: 'riso', ditherAlgo: 'floyd-steinberg', cols: 80, ramp: ' .:-=+*#%@', color: true, invert: false, reactive: true, postFx: ['vignette'] }
+  { name: 'Mosaic Tiles', style: 'mosaic', palette: 'riso', ditherAlgo: 'floyd-steinberg', cols: 80, ramp: ' .:-=+*#%@', color: true, invert: false, reactive: true, postFx: ['vignette'] },
+  // v0.2.6: ten more recipes — same fields, new combinations (ASCII Magic
+  // ramps, Gather-style thermal, dithr fields, Synkit glitch stacks).
+  { name: 'Thermal Scope', style: 'thermal', palette: 'bw', ditherAlgo: 'floyd-steinberg', cols: 100, ramp: ' .:-=+*#%@', color: true, invert: false, reactive: true, postFx: ['bloom'] },
+  { name: 'Neon Rain', style: 'neon', palette: 'pico8', ditherAlgo: 'floyd-steinberg', cols: 110, ramp: ' .:-=+*#%@', color: true, invert: false, reactive: true, postFx: ['bloom', 'chroma'] },
+  { name: 'Vision Boxes', style: 'vision', palette: 'bw', ditherAlgo: 'floyd-steinberg', cols: 120, ramp: ' .:-=+*#%@', color: false, invert: false, reactive: true, postFx: ['scanlines'] },
+  { name: 'Bayer Poster', style: 'dither', palette: 'gameboy', ditherAlgo: 'bayer4', cols: 110, ramp: ' .:-=+*#%@', color: true, invert: false, reactive: true, postFx: ['grain', 'vignette'] },
+  { name: 'Sierra Print', style: 'halftone', palette: 'riso', ditherAlgo: 'sierra', cols: 100, ramp: ' .:-=+*#%@', color: true, invert: false, reactive: true, postFx: ['grain', 'dust'] },
+  { name: 'Binary Static', style: 'ascii', palette: 'bw', ditherAlgo: 'floyd-steinberg', cols: 150, ramp: ' 011', color: false, invert: true, reactive: true, postFx: ['glitch', 'scanlines'] },
+  { name: 'Voxel Dusk', style: 'voxel', palette: 'sunset', ditherAlgo: 'floyd-steinberg', cols: 72, ramp: ' .:-=+*#%@', color: true, invert: false, reactive: true, postFx: ['vignette', 'bloom'] },
+  { name: 'LEGO Mono', style: 'lego', palette: 'bw', ditherAlgo: 'atkinson', cols: 80, ramp: ' .:-=+*#%@', color: false, invert: false, reactive: true, postFx: ['scanlines', 'grain'] },
+  { name: 'Braille Neon', style: 'braille', palette: 'pico8', ditherAlgo: 'floyd-steinberg', cols: 140, ramp: ' .:-=+*#%@', color: true, invert: false, reactive: true, postFx: ['charbloom', 'chroma'] },
+  { name: 'Mosaic CRT', style: 'mosaic', palette: 'c64', ditherAlgo: 'burkes', cols: 84, ramp: ' .:-=+*#%@', color: true, invert: false, reactive: true, postFx: ['crt', 'scanlines', 'chroma'] }
 ];

@@ -153,7 +153,7 @@ html, body { height: 100%; overflow: hidden; background: var(--app-bg); font-fam
 /* v0.2.4: the tab grids need an explicit row, or an `auto` row grows with
    its content and the pane never scrolls — the row must be capped at the
    container height so tall panels scroll inside it. */
-#tab-glitch.active, #tab-ascii.active, #tab-cook.active, #tab-cut.active, #tab-mission.active { grid-template-rows: minmax(0, 1fr); }
+#tab-glitch.active, #tab-ascii.active, #tab-cook.active, #tab-cut.active { grid-template-rows: minmax(0, 1fr); }
 #play-panels { grid-template-rows: minmax(0, 1fr); }
 /* v0.2.4: every scrollable panel gets a VISIBLE, theme-colored scrollbar
    (thin, drag + wheel). No more hidden scrollbars hiding content. */
@@ -247,7 +247,13 @@ fieldset legend { font-size: 11px; color: var(--app-accent); letter-spacing: .08
    LIBRARY | QUEUE | LYRICS → status. The tab never scrolls as a page:
    each panel scrolls inside its own box, sized to the window like
    Mousiki's clamp_output_rows. */
-#tab-play.active { display: flex; flex-direction: column; overflow: hidden; }
+/* v0.2.6: Mission Control lives under the player now, so the Play tab
+   scrolls inside itself (the document never scrolls); the player panels
+   keep a fixed height so the Mousiki layout never squashes. The status
+   bar sticks to the bottom while you scroll. */
+#tab-play.active { display: flex; flex-direction: column; overflow-y: auto; }
+#play-panels { flex: 0 0 320px; height: 320px; }
+#play-status { position: sticky; bottom: 0; z-index: 5; }
 #play-top { flex: 0 0 auto; padding: 10px 14px 6px; border-bottom: 1px solid var(--app-border); display: flex; flex-direction: column; gap: 6px; }
 #play-progress { display: flex; gap: 10px; align-items: center; }
 #play-progress .paper-range { flex: 1; }
@@ -262,7 +268,7 @@ fieldset legend { font-size: 11px; color: var(--app-accent); letter-spacing: .08
 #play-spectrum, #play-waveform { width: 100%; background: var(--app-code-bg-2); border: 1px solid var(--app-border); border-radius: 10px; }
 #play-spectrum { height: 120px; }
 #play-waveform { height: 70px; }
-#play-panels { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 1fr 1fr; }
+#play-panels { min-height: 0; display: grid; grid-template-columns: 1fr 1fr 1fr; }
 #play-panels .pane { min-height: 0; display: flex; flex-direction: column; }
 #library-pane, #playlist-pane { border-right: 1px solid var(--app-border); }
 #lyrics-pane { border-right: none; }
@@ -301,7 +307,7 @@ fieldset legend { font-size: 11px; color: var(--app-accent); letter-spacing: .08
 /* Live Strudel code panel — the engine writes what it hears. Toaster's
    model: the code IS the main content, a left column over the canvas. */
 #code-panel { position: absolute; left: 12px; right: auto; width: 420px; top: 64px; bottom: 12px; z-index: 4; background: var(--app-code-bg); border: 2px solid var(--app-border); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; }
-#code-panel.hidden-panel #code-lines { display: none; }
+#code-panel.hidden-panel { display: none; }
 .code-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 12px; border-bottom: 1px solid var(--app-border); flex: 0 0 auto; flex-wrap: wrap; }
 .code-title { font-size: 12.5px; font-weight: 700; letter-spacing: .14em; color: var(--app-accent); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .code-title #code-status { color: var(--app-faint); letter-spacing: .02em; font-weight: 500; }
@@ -361,7 +367,7 @@ fieldset legend { font-size: 11px; color: var(--app-accent); letter-spacing: .08
 .cook-start-btn:hover:not(:disabled) { background: #ff4d9d; }
 .cook-start-btn:disabled { opacity: .4; cursor: default; }
 .tab-blurb { font-size: 12.5px; color: var(--app-dim); line-height: 1.6; margin-bottom: 10px; overflow-wrap: break-word; }
-#cook-controls { display: flex; flex-direction: column; gap: 4px; }
+#cook-controls { display: flex; flex-direction: column; gap: 4px; overflow-y: auto; min-height: 0; }
 #cook-controls fieldset label { font-size: 12.5px; }
 #cook-progress { margin: 6px 0 4px; }
 #cook-stage { background: var(--app-code-bg); display: flex; align-items: center; justify-content: center; overflow: hidden; padding: 12px; position: relative; }
@@ -470,7 +476,14 @@ body.presenting #tab-visualize { position: fixed; inset: 0; z-index: 50; }
 
 
 /* ---------- Mission Control ---------- */
-#tab-mission.active { display: grid; grid-template-columns: 1fr 380px; }
+/* v0.2.6: Mission Control folded into Play — a strip under the player
+   panels, same live map / x-ray / tiles / code / hex as before. */
+#play-mc { display: grid; grid-template-columns: 1fr 380px; border-top: 2px solid var(--app-border); flex: 0 0 auto; }
+#play-mc-head { grid-column: 1 / -1; display: flex; gap: 10px; align-items: center; padding: 10px 12px 0; }
+#play-mc-head .pane-title { margin-bottom: 0; }
+#play-mc-head .paper-btn { margin-left: auto; }
+#play-mc.collapsed #mc-main, #play-mc.collapsed #mc-rail { display: none; }
+#mc-main { padding-top: 10px; }
 #mc-main { display: flex; flex-direction: column; overflow-y: auto; }
 #mc-map { width: 100%; height: 300px; background: var(--app-code-bg); border: 1px solid var(--app-border); border-radius: 10px; }
 #mc-xray { display: flex; align-items: stretch; gap: 0; margin: 4px 0 12px; }
@@ -622,3 +635,33 @@ body.presenting #viz-status { display: none !important; }
      on narrower windows so the tab bar fits. */
   #btn-palette { display: none; }
 }
+
+/* ---------- v0.2.6: Visualize fullscreen + draggable panels ---------- */
+body.viz-fullscreen #tabbar, body.viz-fullscreen #transport { display: none !important; }
+#tab-visualize.viz-fullscreen { position: fixed; inset: 0; z-index: 60; background: var(--app-bg); }
+#tab-visualize.viz-fullscreen #canvas { position: absolute; inset: 0; }
+#tab-visualize.viz-fullscreen .present-strip { display: none; }
+/* Drag handles + resize grips (layout.js): every panel gets a grip on its
+   title bar and a corner grip. Raw TUI look — no pills, no shadows. */
+.drag-grip { cursor: grab; color: var(--app-faint); font-weight: 800; letter-spacing: .1em; user-select: none; margin-right: 6px; }
+.drag-grip:active { cursor: grabbing; }
+[data-layout-panel].layout-dragging { outline: 2px dashed var(--accent-hot); outline-offset: -2px; opacity: .85; }
+.resize-grip { position: absolute; right: 0; bottom: 0; width: 16px; height: 16px; cursor: nwse-resize; z-index: 8; background: linear-gradient(135deg, transparent 50%, var(--app-accent-2) 50%); opacity: .7; }
+.resize-grip:hover { opacity: 1; }
+[data-layout-panel] { position: relative; }
+/* The two floating Visualize panels keep their absolute positioning —
+   the rule above must not flatten them to relative (that pushed the
+   layers panel to left −12, peeking out from behind the code panel). */
+#code-panel, #layers-panel { position: absolute; }
+.layout-hidden { display: none !important; }
+/* Module context menu + editor (Mousiki settings model, with a mouse). */
+#module-menu { position: fixed; z-index: 100; min-width: 240px; }
+#module-menu .menu-head { font-size: 11px; font-weight: 700; letter-spacing: .14em; color: var(--app-accent); padding: 8px 10px 4px; }
+#module-dialog .param-row { display: flex; flex-direction: column; gap: 4px; margin: 10px 0; font-size: 12.5px; }
+#module-dialog .param-row label { font-size: 11px; font-weight: 700; letter-spacing: .1em; color: var(--app-dim); }
+#module-dialog .param-desc { font-size: 11.5px; color: var(--app-faint); line-height: 1.5; }
+#module-dialog input[type="color"] { width: 56px; height: 30px; padding: 0; border: 1.5px solid var(--app-border-strong); background: var(--app-surface-3); cursor: pointer; }
+
+/* v0.2.6: slim drag bar for panels without a title; compact module rows. */
+.drag-bar { height: 16px; display: flex; align-items: center; padding: 0 4px; border-bottom: 1px dashed var(--app-border); color: var(--app-faint); flex: 0 0 auto; }
+.module-compact #library-list li, .module-compact #playlist li { padding: 3px 9px; font-size: 12px; }

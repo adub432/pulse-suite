@@ -6,7 +6,7 @@
    github.com/StopBanning/toaster; see THIRD-PARTY-NOTICES.md). This is a
    re-implementation in Pulse Suite's own architecture, not a copy of the file:
    Toaster runs three AnalyserNodes (fast/mid/slow) plus a ring history and a
-   fitted logistic kick detector; Pulse Suite has ONE AnalyserNode (2048 FFT)
+   fitted logistic kick detector; Pulse Suite has ONE AnalyserNode (4096 FFT, v0.2.6)
    and one shared render loop, so the engine here is adapted to that:
 
    KEPT, algorithm-for-algorithm (with Toaster's own comments condensed):
@@ -339,7 +339,7 @@ function taTimingHypotheses(onsets, tonal, t, bpms) {
    ========================================================================== */
 function createAnalysis(sampleRate) {
   const sr = sampleRate || 48000;
-  const hzPerBin = sr / 2 / 1024; // fast analyser fftSize 2048 -> 1024 bins
+  const hzPerBin = sr / 2 / 2048; // v0.2.6: fast analyser fftSize 4096 -> 2048 bins
   // Chroma reads the SLOW analyser (fftSize 8192 -> 4096 bins, 5.86 Hz/bin
   // at 48 kHz): the fast analyser's 23.4 Hz bins smear a 55 Hz bass note
   // across semitones. Toaster's architecture is the same (fast/mid/slow).
@@ -363,6 +363,25 @@ function createAnalysis(sampleRate) {
     section: '', // 'drop' | 'breakdown' | ''
     ducking: false, duckDepth: 0,
     silent: true,
+    // v0.2.6 hi-res readouts — the effects' extra detail (see update()).
+    rms: 0, loudnessDb: -70, centroid: 0, flux: 0,
+    beatPhase: -1, barPhase: -1,           // 0..1 through the beat / bar (-1 = unlocked)
+    chroma: new Float32Array(12), chromaSum: 0,
+    bands32: new Float32Array(32),         // 32 log-spaced band energies, 30 Hz..12 kHz
+    bands64: new Float32Array(64),         // v0.2.6: the 32 bands mirrored (Mousiki-style, bass centre)
+    bandFlux32: new Float32Array(32),      // per-band spectral flux this frame
+    bandOnsets: [],                        // band indices whose flux spiked this frame
+    hotBand: -1,                           // loudest spiking band this frame (-1 = none)
+    // v0.2.6: instrument presence, 0..1 each — frequency-band + feature
+    // heuristics (light path, live): drums ride the onset detectors,
+    // bass rides the low end, vocals ride midrange energy WITH movement
+    // (a sustained pad has energy but no flux, so it is not a voice),
+    // guitar/keys ride sustained harmonic energy (high energy, low flux).
+    // Real stem separation (Demucs-style) is NOT live — it is an offline
+    // step for a loaded file only, cached per track (see app.js).
+    instruments: { vocals: 0, drums: 0, guitar: 0, bass: 0, keys: 0 },
+    offline: null,                         // full-file analysis (exact BPM/grid/sections)
+    sections: [],                          // [{start, end, type}] from the offline pass
     lastKick: -10, lastDrop: -99, lastSound: -10,
     lastBdBandT: -10, // last kick-band onset, for transient echo suppression
     // --- codegen shape (4-bar slots, 16-step voice grids) ---
@@ -403,6 +422,14 @@ function createAnalysis(sampleRate) {
     hintLocked: false, // the grid is anchored on the offline BPM (files only)
     coarseAt: -10,
     setHint(bpm) { this.bpmHint = (bpm >= 60 && bpm <= 200) ? bpm : 0; },
+    // v0.2.6: the full-file offline pass (detectBeats in app.js) anchors the
+    // live lock — exact BPM, beat grid and sections for a loaded file, where
+    // the live lock alone is only ±5%. System audio has no offline pass.
+    setOffline(det) {
+      this.offline = det || null;
+      this.sections = (det && det.sections) || [];
+      if (det && det.bpm) this.setHint(det.bpm);
+    },
     // Anchor the grid on the offline BPM: for a loaded file the offline
     // analysis (whole-file onset intervals) is exact, while the live lock
     // is approximate — the snare detector fires on kick clicks too, so the
@@ -434,13 +461,29 @@ function createAnalysis(sampleRate) {
         this.gridCounts[id] = new Float32Array(16);
       }
       this.lastKick = -10; this.lastDrop = -99; this.silent = true;
+      this.rms = 0; this.loudnessDb = -70; this.centroid = 0; this.flux = 0;
+      this.beatPhase = -1; this.barPhase = -1;
+      this.chroma.fill(0); this.chromaSum = 0;
+      this.bands32.fill(0); this.bandFlux32.fill(0);
+      this.bands64.fill(0);
+      this.instruments = { vocals: 0, drums: 0, guitar: 0, bass: 0, keys: 0 };
+      this.bandOnsets = []; this.hotBand = -1;
+      prevMag.fill(0); prevBandE.fill(0);
     },
   };
+  const prevDb = new Float32Array(2048);
+  // v0.2.6 hi-res features: per-frame spectral magnitudes (for centroid /
+  // flux) and 32 log-spaced band energies (for per-band onsets).
+  const prevMag = new Float32Array(2048);
+  const AN_EDGES = (() => { const e = []; for (let i = 0; i <= 32; i++) e.push(30 * Math.pow(12000 / 30, i / 32)); return e; })();
+  const prevBandE = new Float32Array(32);
+  // reset() touches prevMag/prevBandE, so it runs only once they exist —
+  // calling it before these consts (TDZ) threw on the first play in 0.2.6.
   eng.reset();
 
   const bandRange = (loHz, hiHz) => [
     Math.max(1, Math.round(loHz / hzPerBin)),
-    Math.min(1023, Math.round(hiHz / hzPerBin)),
+    Math.min(2047, Math.round(hiHz / hzPerBin)),
   ];
   const BANDS = {
     bd: bandRange(40, 130), sd: bandRange(1100, 5200), hh: bandRange(7000, 15000),
@@ -461,8 +504,6 @@ function createAnalysis(sampleRate) {
     }
     return f / Math.max(1, hi - lo + 1);
   };
-  const prevDb = new Float32Array(1024);
-
   // Chroma from the dB spectrum: each bin's magnitude lands on its nearest
   // note, weighted by how close it sits (pitchMap's cos^2 weight).
   function chromaFrom(freqDb, map, out) {
@@ -549,8 +590,57 @@ function createAnalysis(sampleRate) {
     for (let i = 0; i < timeFloat.length; i += 4) { const v = timeFloat[i]; sum += v * v; }
     const rms = Math.sqrt(sum / (timeFloat.length / 4));
     eng.level += (rms - eng.level) * 0.4;
+    eng.rms = rms;
+    eng.loudnessDb = 20 * Math.log10(rms + 1e-12);
     eng.silent = eng.level < 0.004;
     if (!eng.silent) eng.lastSound = t;
+
+    // --- v0.2.6 hi-res spectral features (4096-pt FFT, 2048 bins) ---
+    // Spectral centroid (brightness) + spectral flux (how much the
+    // spectrum changed since last frame), from linear magnitudes.
+    {
+      let magSum = 0, wSum = 0, fl = 0;
+      for (let k = 1; k < 2048; k++) {
+        const m = Math.pow(10, freqDb[k] / 20);
+        magSum += m; wSum += k * hzPerBin * m;
+        const d = m - prevMag[k];
+        if (d > 0) fl += d;
+        prevMag[k] = m;
+      }
+      eng.centroid = magSum > 1e-9 ? wSum / magSum : 0;
+      eng.flux = fl;
+      // 32 log-spaced band energies + per-band flux + per-band onsets.
+      let fluxMean = 0;
+      for (let b = 0; b < 32; b++) {
+        const lo = Math.max(1, Math.floor(AN_EDGES[b] / hzPerBin));
+        const hi = Math.max(lo + 1, Math.min(2047, Math.floor(AN_EDGES[b + 1] / hzPerBin)));
+        let e = 0;
+        for (let k = lo; k < hi; k++) e += Math.pow(10, freqDb[k] / 10);
+        e /= (hi - lo);
+        const bf = Math.max(0, e - prevBandE[b]);
+        eng.bands32[b] = e;
+        eng.bandFlux32[b] = bf;
+        fluxMean += bf;
+        prevBandE[b] = e;
+      }
+      fluxMean /= 32;
+      eng.bandOnsets = [];
+      eng.hotBand = -1;
+      let hotFlux = 0;
+      for (let b = 0; b < 32; b++) {
+        if (eng.bandFlux32[b] > 0.02 && eng.bandFlux32[b] > 1.8 * Math.max(fluxMean, 1e-6)) {
+          eng.bandOnsets.push(b);
+          if (eng.bandFlux32[b] > hotFlux) { hotFlux = eng.bandFlux32[b]; eng.hotBand = b; }
+        }
+      }
+      // Mirror the 32 bands to 64 (Mousiki-style: bass in the centre,
+      // treble falling off to both edges — same layout mousikiBands()
+      // uses for the Play spectrum).
+      for (let i = 0; i < 32; i++) {
+        eng.bands64[i * 2] = clamp01((10 * Math.log10(eng.bands32[31 - i] + 1e-12) + 70) / 70);
+        eng.bands64[i * 2 + 1] = clamp01((10 * Math.log10(eng.bands32[i] + 1e-12) + 70) / 70);
+      }
+    }
 
     // --- ring buffer for the low-end strike test ---
     for (let i = 0; i < timeFloat.length; i++) {
@@ -638,6 +728,15 @@ function createAnalysis(sampleRate) {
     // --- chroma (notes now) + bar accumulation (slow analyser) ---
     const chromaSrc = slowDb || freqDb;
     chromaFrom(chromaSrc, chromaMap, eng.frameChroma);
+    // v0.2.6: keep a normalised copy of this frame's chroma for the x-ray
+    // and the effects (chord/key already use the bar accumulation).
+    {
+      let cs = 0;
+      for (let i = 0; i < 12; i++) cs += eng.frameChroma[i];
+      eng.chromaSum = cs;
+      if (cs > 1e-9) for (let i = 0; i < 12; i++) eng.chroma[i] = eng.frameChroma[i] / cs;
+      else eng.chroma.fill(0);
+    }
     const frameBass = new Float32Array(12);
     chromaFrom(chromaSrc, bassMap, frameBass);
     for (let i = 0; i < 12; i++) { eng.barChroma[i] += eng.frameChroma[i]; eng.barBass[i] += frameBass[i]; }
@@ -712,6 +811,13 @@ function createAnalysis(sampleRate) {
       }
       eng.step = Math.floor(((t - eng.barStart) / (P / 4)) % 16);
       eng.beatInBar = Math.floor(((t - eng.barStart) / P) % 4);
+      // v0.2.6: beat/bar phase — where inside the beat (0..1) the playhead
+      // sits. Scenes, ASCII and Cook use it to time their motion to the
+      // grid instead of only reacting to kicks.
+      eng.beatPhase = ((t - eng.barStart) / P) % 1;
+      eng.barPhase = ((t - eng.barStart) / (P * 4)) % 1;
+    } else {
+      eng.beatPhase = -1; eng.barPhase = -1;
     }
 
     // --- presence (for the code panel's mutes) ---
@@ -723,6 +829,27 @@ function createAnalysis(sampleRate) {
       chords: present(eng.chordSeen, 12),
     };
     eng.playing = (seen, windowS = 8) => t - seen < windowS;
+
+    // --- v0.2.6: instrument presence heuristics (light path, live) ---
+    // Drums ride the onset detectors; bass rides the low end; vocals ride
+    // midrange energy WITH movement (a sustained pad has energy but no
+    // flux, so it is not a voice); guitar/keys ride sustained harmonic
+    // energy (high energy, low flux — a strum rings, it does not thump).
+    {
+      const meanE = (lo, hi) => { let s = 0; for (let b = lo; b <= hi; b++) s += eng.bands32[b]; return s / Math.max(1, hi - lo + 1); };
+      const meanF = (lo, hi) => { let s = 0; for (let b = lo; b <= hi; b++) s += eng.bandFlux32[b]; return s / Math.max(1, hi - lo + 1); };
+      const norm = (e) => clamp01((10 * Math.log10(e + 1e-12) + 70) / 70);
+      const sm = (cur, target, a) => cur + (target - cur) * a;
+      const I = eng.instruments;
+      I.drums = sm(I.drums, clamp01(sBd + sSd + sHh), 0.35);
+      I.bass = sm(I.bass, clamp01(eng.bandLevel.low * 2.2), 0.2);
+      const vE = norm(meanE(14, 25)), vF = meanF(14, 25); // 300 Hz..3.4 kHz
+      I.vocals = sm(I.vocals, clamp01(vE * 1.7) * clamp01(0.35 + vF * 9), 0.12);
+      const gE = norm(meanE(5, 15)), gF = meanF(5, 15);   // 80 Hz..1.2 kHz
+      I.guitar = sm(I.guitar, clamp01(gE * 1.9) * clamp01(1 - gF * 7), 0.12);
+      const kE = norm(meanE(11, 26)), kF = meanF(11, 26); // 200 Hz..4 kHz
+      I.keys = sm(I.keys, clamp01(kE * 1.6) * clamp01(1 - kF * 5), 0.12);
+    }
 
     // --- decay ---
     eng.beat *= 0.92;

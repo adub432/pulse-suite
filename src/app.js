@@ -1,5 +1,5 @@
 'use strict';
-/* Pulse Suite v0.2.3 — all-in-one desktop media studio.
+/* Pulse Suite v0.2.6 — all-in-one desktop media studio.
    Tabs share one audio engine (one AudioContext + analyser, like Felhaven's
    "Harmonia: the one audio output device") and one media store.
    Engines ported (adapted, not copied — see src/analysis.js, src/codegen.js,
@@ -34,7 +34,17 @@
    numbers, breathing with the kick/bass), syntax-highlighted live code, and
    the hand-coded HTML skin across the whole app (chrome included): square
    corners, hard borders, brutalist shadows, Paper Mono everywhere, no
-   generic Material polish visible. */
+   generic Material polish visible.
+   v0.2.6 adds: Mission Control folded INTO the Play tab (live map +
+   pipeline x-ray + stat tiles + live code/hex, one tab); every panel
+   draggable / resizable / editable with layout persisted in
+   pulse-config.json; modules clickable + right-clickable to edit (Mousiki
+   settings model: per-element on/off, colours, animation params);
+   hi-res analysis (32/64 bands, centroid/flux/RMS, chroma, beat phase,
+   offline full-file analysis, instrument heuristics); ~50 Visualize
+   scenes; Visualize fullscreen + a Hide button that hides the whole live
+   code box; Cook warp/displacement fixed to breathe from the source
+   image, more recipe effects, scrolling modules panel. */
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('canvas');
@@ -109,14 +119,14 @@ window.addEventListener('unhandledrejection', (e) => window.__errors.push('unhan
 const SVG_PLAY = '<svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
 const SVG_PAUSE = '<svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>';
 
-const freqData = new Uint8Array(1024);
-const freqDb = new Float32Array(1024);
+const freqData = new Uint8Array(2048); // v0.2.6: 4096-pt FFT -> 2048 bins
+const freqDb = new Float32Array(2048);
 const slowDb = new Float32Array(4096); // slow analyser (8192 FFT) — chroma only
 const waveData = new Uint8Array(2048);
 const timeFloat = new Float32Array(2048);
 let analysis = null; // Toaster-engine port (src/analysis.js), one per AudioContext
-const MOUSIKI_EDGES = [30, 50, 80, 120, 180, 250, 350, 500, 700, 1000, 1400, 2000, 2800, 4000, 5600, 8000, 12000];
-const mousikiSmooth = new Float32Array(32); // mirrored 16-band spectrum, bass in the centre
+const MOUSIKI_EDGES = [30.0, 36.2, 43.6, 52.6, 63.4, 76.5, 92.3, 111.3, 134.2, 161.8, 195.1, 235.3, 283.7, 342.1, 412.6, 497.6, 600.0, 723.5, 872.5, 1052.2, 1268.8, 1530.1, 1845.2, 2225.1, 2683.3, 3235.8, 3902.1, 4705.5, 5674.4, 6842.9, 8251.9, 9951.0, 12000.0]; // v0.2.6: 32 half-bands, log-spaced 30 Hz..12 kHz
+const mousikiSmooth = new Float32Array(64); // v0.2.6: mirrored 32-band spectrum, bass in the centre
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 const AUDIO_EXT = /\.(mp3|wav|flac|ogg|m4a|aiff?)$/i;
 const VIDEO_EXT = /\.(mp4|webm|mov|mkv)$/i;
@@ -163,18 +173,19 @@ function bandEnergy(loHz, hiHz) {
   return sum / Math.max(1, hi - lo + 1) / 255;
 }
 /* Mousiki's FFT band math (ported from src/fft_visualizer.cpp, Apache 2.0):
-   log-spaced edges 30 Hz–12 kHz into 16 half-bands, mirrored to 32 so the
-   bass sits in the CENTER and treble falls off toward both edges; dB =
-   10*log10(power) + 70, clamped 0..70; fast attack (0.97) / fast release
-   (0.93) smoothing. Reads the analyser's dB data (0 dBFS = full scale). */
+   log-spaced edges 30 Hz–12 kHz into 32 half-bands (v0.2.6: was 16),
+   mirrored to 64 so the bass sits in the CENTER and treble falls off
+   toward both edges; dB = 10*log10(power) + 70, clamped 0..70; fast
+   attack (0.97) / fast release (0.93) smoothing. Reads the analyser's
+   dB data (0 dBFS = full scale) — now from the 4096-pt FFT's 2048 bins. */
 function mousikiBands() {
   // No audio yet (Play tab renders before any track loads): return silence
   // instead of throwing — an exception here kills the shared render loop.
   if (!state.audioCtx) return mousikiSmooth;
   const sr = state.audioCtx.sampleRate;
   const hzPerBin = sr / 2 / freqDb.length;
-  const right = new Float32Array(16);
-  for (let b = 0; b < 16; b++) {
+  const right = new Float32Array(32);
+  for (let b = 0; b < 32; b++) {
     const lo = Math.max(1, Math.floor(MOUSIKI_EDGES[b] / hzPerBin));
     const hi = Math.max(lo + 1, Math.min(freqDb.length - 1, Math.floor(MOUSIKI_EDGES[b + 1] / hzPerBin)));
     let e = 0;
@@ -183,8 +194,8 @@ function mousikiBands() {
     const db = 10 * Math.log10(e + 1e-12) + 70;
     right[b] = Math.min(70, Math.max(0, db)) / 70;
   }
-  for (let i = 0; i < 16; i++) {
-    const full = [right[15 - i], right[i]];
+  for (let i = 0; i < 32; i++) {
+    const full = [right[31 - i], right[i]];
     for (let j = 0; j < 2; j++) {
       const idx = i * 2 + j, v = full[j];
       const a = v > mousikiSmooth[idx] ? 0.97 : 0.93;
@@ -208,7 +219,13 @@ function updateSysAudioUI() {
     : 'System audio: ' + (state.sysAudioErr || 'press LISTEN TO MY PC');
 }
 function resetAnalysis(hint) {
-  if (analysis) { analysis.reset(); analysis.setHint(hint || 0); analysis.lockHint(); }
+  if (analysis) {
+    analysis.reset(); analysis.setHint(hint || 0);
+    // v0.2.6: the full-file offline pass anchors the live lock (exact BPM,
+    // beat grid, sections) — system audio has no offline pass (null).
+    if (state.lastBeats) analysis.setOffline(state.lastBeats);
+    analysis.lockHint();
+  }
   cgReset();
   mousikiSmooth.fill(0);
 }
@@ -367,8 +384,107 @@ function detectBeats(buf) {
       let t = onsets[0];
       while (t < buf.duration) { beatTimes.push(t); t += spb; }
     }
-    return { bpm, onsets, beatTimes };
-  } catch (_) { return { bpm: 0, onsets: [], beatTimes: [] }; }
+    // --- v0.2.6: full-file offline extras (loaded files only — system
+    // audio has no file to scan, so it gets none of this) ---
+    // Loudness curve: RMS per 0.5 s, peak-normalised.
+    const loudness = [];
+    {
+      const step = Math.floor(buf.sampleRate * 0.5);
+      let peak = 0;
+      const vals = [];
+      for (let s = 0; s + step <= ch.length; s += step) {
+        let e = 0;
+        for (let j = 0; j < step; j += 4) { const v = ch[s + j]; e += v * v; }
+        const r = Math.sqrt(e / (step / 4));
+        vals.push(r); if (r > peak) peak = r;
+      }
+      for (let i = 0; i < vals.length; i++) loudness.push({ t: +(i * 0.5).toFixed(2), v: peak ? +(vals[i] / peak).toFixed(3) : 0 });
+    }
+    // Sections: per-beat energy against the file mean — drop / groove /
+    // breakdown — merged into runs of at least 4 beats.
+    const sections = [];
+    if (bpm && beatTimes.length >= 8) {
+      const spb = 60 / bpm;
+      const meanE = energies.reduce((a, b) => a + b, 0) / Math.max(1, energies.length);
+      const hopSec = hop / buf.sampleRate;
+      const beatE = beatTimes.map((bt) => {
+        const i0 = Math.floor(bt / hopSec), i1 = Math.min(energies.length, Math.floor((bt + spb) / hopSec));
+        let s = 0, n = 0;
+        for (let i = i0; i < i1; i++) { s += energies[i]; n++; }
+        return n ? s / n : 0;
+      });
+      let cur = null;
+      for (let i = 0; i < beatE.length; i++) {
+        const r = beatE[i] / Math.max(1e-12, meanE);
+        const type = r > 1.25 ? 'drop' : r < 0.6 ? 'breakdown' : 'groove';
+        if (!cur || cur.type !== type) { if (cur) sections.push(cur); cur = { start: +beatTimes[i].toFixed(2), end: +beatTimes[i].toFixed(2), type }; }
+        cur.end = +(beatTimes[i] + spb).toFixed(2);
+      }
+      if (cur) sections.push(cur);
+      for (let i = sections.length - 1; i >= 0; i--) {
+        const beats = (sections[i].end - sections[i].start) / spb;
+        if (beats < 4 && sections.length > 1) {
+          if (i > 0) { sections[i - 1].end = sections[i].end; sections.splice(i, 1); }
+          else { sections[1].start = sections[0].start; sections.splice(0, 1); }
+        }
+      }
+    }
+    // Chroma timeline: 2048-pt FFT per 0.5 s window, bins mapped to the
+    // 12 pitch classes (MIDI 36..95), normalised per window.
+    const chromaTimeline = [];
+    {
+      const N = 2048, step = Math.floor(buf.sampleRate * 0.5);
+      const re = new Float64Array(N), im = new Float64Array(N);
+      for (let s = 0; s + N <= ch.length; s += step) {
+        for (let k = 0; k < N; k++) {
+          const w = 0.5 - 0.5 * Math.cos(2 * Math.PI * k / (N - 1)); // Hann
+          re[k] = ch[s + k] * w; im[k] = 0;
+        }
+        fft2048(re, im);
+        const c = new Float64Array(12);
+        for (let k = 2; k < N / 2; k++) {
+          const f = k * buf.sampleRate / N;
+          if (f < 55 || f > 4000) continue;
+          const m = 69 + 12 * Math.log2(f / 440);
+          const r = Math.round(m);
+          const wgt = Math.cos(Math.PI * (m - r)) ** 2;
+          if (wgt < 0.05) continue;
+          const mag = Math.sqrt(re[k] * re[k] + im[k] * im[k]);
+          c[((r % 12) + 12) % 12] += mag * wgt;
+        }
+        let sum = 0; for (let i = 0; i < 12; i++) sum += c[i];
+        chromaTimeline.push({ t: +(s / buf.sampleRate).toFixed(2), c: Array.from(c, (v) => sum > 0 ? +(v / sum).toFixed(3) : 0) });
+      }
+    }
+    return { bpm, onsets, beatTimes, sections, loudness, chromaTimeline };
+  } catch (_) { return { bpm: 0, onsets: [], beatTimes: [], sections: [], loudness: [], chromaTimeline: [] }; }
+}
+/* Small iterative radix-2 FFT (2048 points) for the offline chroma
+   timeline — the live engine's chroma comes from the analyser, but a
+   loaded file gets a full-file chroma timeline from the PCM. */
+function fft2048(re, im) {
+  const n = 2048;
+  for (let i = 1, j = 0; i < n; i++) {
+    let bit = n >> 1;
+    for (; j & bit; bit >>= 1) j ^= bit;
+    j ^= bit;
+    if (i < j) { const tr = re[i]; re[i] = re[j]; re[j] = tr; const ti = im[i]; im[i] = im[j]; im[j] = ti; }
+  }
+  for (let len = 2; len <= n; len <<= 1) {
+    const ang = -2 * Math.PI / len;
+    const wr = Math.cos(ang), wi = Math.sin(ang);
+    for (let i = 0; i < n; i += len) {
+      let cwr = 1, cwi = 0;
+      for (let k = 0; k < len / 2; k++) {
+        const ur = re[i + k], ui = im[i + k];
+        const vr = re[i + k + len / 2] * cwr - im[i + k + len / 2] * cwi;
+        const vi = re[i + k + len / 2] * cwi + im[i + k + len / 2] * cwr;
+        re[i + k] = ur + vr; im[i + k] = ui + vi;
+        re[i + k + len / 2] = ur - vr; im[i + k + len / 2] = ui - vi;
+        const nwr = cwr * wr - cwi * wi; cwi = cwr * wi + cwi * wr; cwr = nwr;
+      }
+    }
+  }
 }
 function estimateBpm(buf) { return detectBeats(buf).bpm; }
 
@@ -994,6 +1110,60 @@ const SCENES = {
   glitch:     { label: 'Glitch',     family: 'TOASTER',  desc: 'Corrupt tiles + pixel sort, live' },
 };
 const SCENE_ORDER = ['spectrum', 'scope', 'orbit', 'roll', 'fountain', 'pattern', 'studio', 'geometric', 'dither', 'depth', 'ascii', 'mesh', 'glitch'];
+/* v0.2.6: 37 more scenes from src/scenes-026.js (reference sites, Synkit
+   Nexus, saved reels) — 50 scenes total. Merged into SCENES + the rail
+   here, before the chip listeners attach, so the new chips are clickable
+   like the original 13. */
+if (window.PULSE_SCENES_026) {
+  for (const s of window.PULSE_SCENES_026.list) {
+    SCENES[s.id] = { label: s.label, family: s.family, desc: s.desc };
+    SCENE_ORDER.push(s.id);
+  }
+  // Rail chips for the new scenes, grouped by family, before the footer.
+  const rail = $('lookbar');
+  const foot = rail.querySelector('.rail-foot');
+  const groups = [['SITES', '├─ SITES ─┤'], ['SYNKIT', '├─ SYNKit ─┤'], ['PULSE', '├─ PULSE 026 ─┤']];
+  for (const [fam, head] of groups) {
+    const items = window.PULSE_SCENES_026.list.filter((s) => s.family === fam);
+    if (!items.length) continue;
+    const gh = document.createElement('div');
+    gh.className = 'rail-group'; gh.textContent = head;
+    rail.insertBefore(gh, foot);
+    for (const s of items) {
+      const b = document.createElement('button');
+      b.className = 'look-chip'; b.dataset.look = s.id; b.setAttribute('data-active', 'false');
+      b.textContent = s.label;
+      b.title = s.desc;
+      rail.insertBefore(b, foot);
+    }
+  }
+}
+/* Build the audio/analysis bundle the 0.2.6 scenes draw from — one object,
+   same shape for every scene, defensive when nothing is playing. */
+function scene026Audio(audio) {
+  const a = analysis;
+  return {
+    kick: audio.kick, bass: audio.bass, level: audio.level || 0,
+    rms: a ? a.rms : 0,
+    centroid: a ? a.centroid : 0, flux: a ? a.flux : 0,
+    beatPhase: a ? a.beatPhase : -1, barPhase: a ? a.barPhase : -1,
+    bpm: a && a.bpmLocked ? a.bpm : 0,
+    t: audio.t,
+    bands: mousikiBands(),
+    bands32: a ? a.bands32 : new Float32Array(32),
+    chroma: a ? a.chroma : new Float32Array(12),
+    instruments: a ? a.instruments : { vocals: 0, drums: 0, guitar: 0, bass: 0, keys: 0 },
+    chord: a && a.chord ? a.chord.name : '',
+    key: a && a.key ? `${TA_NOTES[a.key.root]} ${a.key.mode}` : '',
+    theme: THEMES[state.theme],
+  };
+}
+function drawScene026(look, x, y, w, h, audio) {
+  const fn = window.PULSE_SCENES_026 && window.PULSE_SCENES_026.draw[look];
+  if (!fn) return;
+  try { fn(ctx, x, y, w, h, scene026Audio(audio)); }
+  catch (e) { window.__errors.push('scene ' + look + ': ' + (e.message || e)); }
+}
 const cgNum = (v) => String(+Number(v).toFixed(2)).replace(/^0\./, '.');
 // The live scene definition, Strudel-style: scene call + one chained call
 // per enabled layer + the audio-reactive numbers, which breathe with the
@@ -1047,7 +1217,7 @@ function drawSpectrum(x, y, w, h, big) {
   const bw = w / n;
   ctx.fillStyle = barGradient(w, h);
   for (let i = 0; i < n; i++) {
-    const v = bands[Math.floor(i * 32 / n)];
+    const v = bands[Math.floor(i * 64 / n)];
     const bh = Math.max(2, v * h);
     ctx.fillRect(x + i * bw + 1, y + h - bh, bw - 2, bh);
   }
@@ -1089,7 +1259,7 @@ function drawOrbit(cx, cy, r) {
   ctx.save();
   ctx.translate(cx, cy);
   for (let ring = 0; ring < ORBIT_RINGS; ring++) {
-    const bandV = bands[8 + ring * 3] || 0; // low bands near the centre
+    const bandV = bands[26 + ring * 2] || 0; // v0.2.6: low bands near the centre of the 64-band mirror
     const rr = r * (0.35 + ring * 0.16) * (1 + bandV * 0.35 + kick * 0.12);
     ctx.strokeStyle = t.grid; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.arc(0, 0, rr, 0, Math.PI * 2); ctx.stroke();
@@ -1181,7 +1351,7 @@ function drawGeometricLook(x, y, w, h) {
     for (let gx = 0; gx < cols; gx++) {
       const cx = x + gx * cw + cw / 2, cy = y + gy * chh + chh / 2;
       const seed = gx * 7 + gy * 13;
-      const bandV = bands[Math.min(31, Math.floor(gx / cols * 32))] || 0;
+      const bandV = bands[Math.min(63, Math.floor(gx / cols * 64))] || 0;
       let kind = preset;
       if (preset === 'mixed') kind = ['triangles', 'circles', 'squares'][seed % 3];
       else if (preset === 'sparse' || preset === 'dense') kind = ['triangles', 'circles', 'squares'][seed % 3];
@@ -1290,8 +1460,8 @@ function drawAsciiScene(x, y, w, h, audio) {
   const grad = sc.createLinearGradient(0, sh, 0, 0);
   grad.addColorStop(0, t.bar[0]); grad.addColorStop(0.55, t.bar[1]); grad.addColorStop(1, t.bar[2]);
   sc.fillStyle = grad;
-  for (let i = 0; i < 32; i++) {
-    const bx = Math.floor(i * sw / 32), bw2 = Math.max(1, Math.floor(sw / 32));
+  for (let i = 0; i < 64; i++) {
+    const bx = Math.floor(i * sw / 64), bw2 = Math.max(1, Math.floor(sw / 64));
     const bh = Math.max(1, Math.round(bands[i] * sh));
     sc.fillRect(bx, sh - bh, bw2, bh);
   }
@@ -1845,12 +2015,18 @@ function drawMiniSpectrum() {
   const w = Math.max(2, Math.floor(c.clientWidth * dpr)), h = Math.max(2, Math.floor(c.clientHeight * dpr));
   if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
   g.fillStyle = '#0b1220'; g.fillRect(0, 0, w, h);
+  // v0.2.6: the spectrum is a module — bands / sensitivity / colour come
+  // from its editor (right-click it), not from hardcoded constants.
+  const v = moduleVals('spectrum');
+  const bars = Number(v.bands) || 64;
+  const sens = Number(v.sensitivity) || 1;
   const bands = mousikiBands();
-  const bars = 64, bw = w / bars;
+  const bw = w / bars;
   for (let i = 0; i < bars; i++) {
-    const v = bands[Math.floor(i * 32 / bars)];
-    const bh = Math.max(2, v * h);
-    g.fillStyle = `hsl(${200 + i * 1.2}, 80%, ${45 + v * 30}%)`;
+    const bv = v.mirrored ? bands[Math.floor(i * 64 / bars)] : (analysis ? analysis.bands64[Math.floor(i * 64 / bars)] : bands[Math.floor(i * 64 / bars)]);
+    const val = Math.min(1, bv * sens);
+    const bh = Math.max(2, val * h);
+    g.fillStyle = v.color ? v.color : `hsl(${200 + i * 1.2}, 80%, ${45 + val * 30}%)`;
     g.fillRect(i * bw + 1, h - bh, bw - 2, bh);
   }
 }
@@ -1861,15 +2037,296 @@ function drawMiniWave() {
   const w = Math.max(2, Math.floor(c.clientWidth * dpr)), h = Math.max(2, Math.floor(c.clientHeight * dpr));
   if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
   g.fillStyle = '#0b1220'; g.fillRect(0, 0, w, h);
-  g.strokeStyle = '#7dd3fc'; g.lineWidth = 2; g.beginPath();
+  // v0.2.6: waveform module settings (style raw/smooth, sensitivity, colour).
+  const v = moduleVals('waveform');
+  const sens = Number(v.sensitivity) || 1;
+  g.strokeStyle = v.color || '#7dd3fc'; g.lineWidth = 2; g.beginPath();
   const step = Math.floor(waveData.length / w);
+  const at = (px) => {
+    const i = Math.min(waveData.length - 1, px * step);
+    if (v.style === 'smooth') {
+      const a = waveData[Math.max(0, i - 1)] / 128 - 1, b = waveData[i] / 128 - 1, d = waveData[Math.min(waveData.length - 1, i + 1)] / 128 - 1;
+      return (a + b * 2 + d) / 4;
+    }
+    return waveData[i] / 128 - 1;
+  };
   for (let px = 0; px < w; px++) {
-    const v = waveData[Math.min(waveData.length - 1, px * step)] / 128 - 1;
-    const py = h / 2 + v * (h / 2 - 4);
+    const val = Math.max(-1, Math.min(1, at(px) * sens));
+    const py = h / 2 + val * (h / 2 - 4);
     px === 0 ? g.moveTo(0, py) : g.lineTo(px, py);
   }
   g.stroke();
 }
+
+/* ---------- modules: click / right-click to edit (v0.2.6, Mousiki model) ----------
+   Mousiki's settings: every element has on/off + colours + animation params,
+   persisted in config.txt, settings on 's'. Pulse Suite does the same thing
+   with a mouse: click a module's title (or the spectrum/waveform canvas)
+   to open its editor; right-click anywhere on a module for its menu.
+   Modules with no registry entry still get the generic menu (hide panel,
+   show hidden panels, reset layout). */
+const moduleSettings = {};
+const MODULES = {
+  spectrum: {
+    name: 'Spectrum analyzer',
+    params: [
+      { key: 'bands', label: 'Bands', type: 'select', options: [['16', '16 bands'], ['32', '32 bands'], ['64', '64 bands']], def: '64', desc: 'How many bars the analyzer draws — 64 is the full mirrored Mousiki set.' },
+      { key: 'sensitivity', label: 'Sensitivity', type: 'range', min: 0.2, max: 2, step: 0.05, def: 1, desc: 'How hard the bars hit — higher means quiet parts read louder.' },
+      { key: 'mirrored', label: 'Mirrored (bass in the centre)', type: 'toggle', def: true, desc: 'Mousiki-style: bass sits in the middle, treble falls off to both edges.' },
+      { key: 'color', label: 'Bar colour', type: 'color', def: '', desc: 'Empty means the theme gradient; pick a colour to pin the bars to one hue.' },
+      { key: 'visible', label: 'Show this module', type: 'toggle', def: true, desc: 'Hide the spectrum without losing its settings.' },
+    ],
+  },
+  waveform: {
+    name: 'Waveform',
+    params: [
+      { key: 'style', label: 'Style', type: 'select', options: [['raw', 'Raw — every sample'], ['smooth', 'Smooth — averaged']], def: 'raw', desc: 'Mousiki’s waveform styles.' },
+      { key: 'sensitivity', label: 'Sensitivity', type: 'range', min: 0.2, max: 2, step: 0.05, def: 1, desc: 'How hard the line swings.' },
+      { key: 'color', label: 'Line colour', type: 'color', def: '', desc: 'Empty means the theme accent.' },
+      { key: 'visible', label: 'Show this module', type: 'toggle', def: true },
+    ],
+  },
+  library: {
+    name: 'Library',
+    params: [
+      { key: 'visible', label: 'Show this module', type: 'toggle', def: true },
+      { key: 'compact', label: 'Compact rows', type: 'toggle', def: false, desc: 'Tighter rows, more tracks on screen.' },
+    ],
+  },
+  queue: {
+    name: 'Queue',
+    params: [
+      { key: 'visible', label: 'Show this module', type: 'toggle', def: true },
+      { key: 'compact', label: 'Compact rows', type: 'toggle', def: false },
+    ],
+  },
+  lyrics: {
+    name: 'Lyrics',
+    params: [
+      { key: 'visible', label: 'Show this module', type: 'toggle', def: true },
+      { key: 'fontSize', label: 'Font size', type: 'range', min: 11, max: 20, step: 1, def: 14 },
+      { key: 'align', label: 'Alignment', type: 'select', options: [['left', 'Left'], ['center', 'Center']], def: 'left' },
+    ],
+  },
+  'live-map': {
+    name: 'Live map',
+    params: [
+      { key: 'visible', label: 'Show this module', type: 'toggle', def: true },
+      { key: 'blipSize', label: 'Blip size', type: 'range', min: 0.5, max: 3, step: 0.25, def: 1, desc: 'How big the kick/snare/hat/chord blips draw.' },
+      { key: 'trail', label: 'Trail length (s)', type: 'range', min: 1, max: 5, step: 0.5, def: 2.6, desc: 'How long a blip stays on the map before fading.' },
+    ],
+  },
+  'code-panel': {
+    name: 'Live code',
+    params: [
+      { key: 'visible', label: 'Show this module', type: 'toggle', def: true },
+      { key: 'fontSize', label: 'Font size', type: 'range', min: 10, max: 18, step: 1, def: 12.5 },
+    ],
+  },
+  'layers-panel': {
+    name: 'Effect layers',
+    params: [{ key: 'visible', label: 'Show this module', type: 'toggle', def: true }],
+  },
+};
+function moduleVals(id) {
+  const m = MODULES[id];
+  const out = {};
+  if (m) for (const p of m.params) out[p.key] = p.def;
+  return { ...out, ...(moduleSettings[id] || {}) };
+}
+function persistModules() {
+  if (window.pulse && window.pulse.setConfig) window.pulse.setConfig({ modules: moduleSettings }).catch(() => {});
+}
+function applyModule(id) {
+  const m = MODULES[id];
+  if (!m) return;
+  const v = moduleVals(id);
+  const el = document.querySelector(`[data-module="${id}"]`);
+  // Visibility is the LAYOUT's job (hide/show via the context menu,
+  // persisted under `layout`). Only honour the module editor's "Show
+  // this module" toggle when the user explicitly set it — the default
+  // (visible: true) must never un-hide a panel the layout hid, or a
+  // hidden panel comes back on every restart.
+  if (el && moduleSettings[id] && 'visible' in moduleSettings[id]) el.classList.toggle('layout-hidden', !moduleSettings[id].visible);
+  if (id === 'lyrics') {
+    const ly = $('lyrics');
+    if (ly) { ly.style.fontSize = v.fontSize + 'px'; ly.style.textAlign = v.align || 'left'; }
+  }
+  if (id === 'library' || id === 'queue') {
+    if (el) el.classList.toggle('module-compact', !!v.compact);
+  }
+  if (id === 'code-panel') {
+    const cl = $('code-lines');
+    if (cl && v.fontSize) cl.style.fontSize = v.fontSize + 'px';
+  }
+}
+function applyModuleSettings(saved) {
+  if (!saved || typeof saved !== 'object') return;
+  Object.assign(moduleSettings, saved);
+  for (const id of Object.keys(MODULES)) applyModule(id);
+}
+function openModuleEditor(id) {
+  const m = MODULES[id];
+  const dlg = $('module-dialog');
+  const body = $('module-dialog-body');
+  if (!m) return;
+  $('module-dialog-title').textContent = 'MODULE — ' + m.name.toUpperCase();
+  const v = moduleVals(id);
+  body.innerHTML = '';
+  for (const p of m.params) {
+    const row = document.createElement('div');
+    row.className = 'param-row';
+    const lab = document.createElement('label');
+    lab.textContent = p.label;
+    row.appendChild(lab);
+    const cur = v[p.key];
+    if (p.type === 'range') {
+      const wrap = document.createElement('div');
+      wrap.style.cssText = 'display:flex;gap:8px;align-items:center;';
+      const s = document.createElement('input');
+      s.type = 'range'; s.className = 'paper-range'; s.min = p.min; s.max = p.max; s.step = p.step; s.value = cur;
+      s.style.flex = '1';
+      const n = document.createElement('input');
+      n.type = 'number'; n.className = 'num-input'; n.min = p.min; n.max = p.max; n.step = p.step; n.value = cur;
+      s.addEventListener('input', () => { n.value = s.value; setModuleParam(id, p.key, Number(s.value)); });
+      n.addEventListener('change', () => { const val = Math.min(p.max, Math.max(p.min, Number(n.value) || Number(s.value))); s.value = val; n.value = val; setModuleParam(id, p.key, val); });
+      wrap.appendChild(s); wrap.appendChild(n);
+      row.appendChild(wrap);
+    } else if (p.type === 'select') {
+      const sel = document.createElement('select');
+      sel.className = 'paper-select';
+      for (const [val, label] of p.options) {
+        const o = document.createElement('option');
+        o.value = val; o.textContent = label; if (String(cur) === String(val)) o.selected = true;
+        sel.appendChild(o);
+      }
+      sel.addEventListener('change', () => setModuleParam(id, p.key, sel.value));
+      row.appendChild(sel);
+    } else if (p.type === 'color') {
+      const wrap = document.createElement('div');
+      wrap.style.cssText = 'display:flex;gap:8px;align-items:center;';
+      const c = document.createElement('input');
+      c.type = 'color'; c.value = cur || '#7dd3fc';
+      c.addEventListener('input', () => setModuleParam(id, p.key, c.value));
+      const b = document.createElement('button');
+      b.className = 'paper-btn paper-btn-text'; b.textContent = 'Use theme';
+      b.addEventListener('click', () => setModuleParam(id, p.key, ''));
+      wrap.appendChild(c); wrap.appendChild(b);
+      row.appendChild(wrap);
+    } else if (p.type === 'toggle') {
+      const chk = document.createElement('input');
+      chk.type = 'checkbox'; chk.className = 'paper-switch'; chk.checked = !!cur;
+      chk.addEventListener('change', () => setModuleParam(id, p.key, chk.checked));
+      row.appendChild(chk);
+    }
+    if (p.desc) {
+      const d = document.createElement('div');
+      d.className = 'param-desc'; d.textContent = p.desc;
+      row.appendChild(d);
+    }
+    body.appendChild(row);
+  }
+  $('btn-module-reset').onclick = () => {
+    moduleSettings[id] = {};
+    applyModule(id); persistModules();
+    openModuleEditor(id); // re-render with defaults
+  };
+  dlg.showModal();
+}
+function setModuleParam(id, key, value) {
+  if (!moduleSettings[id]) moduleSettings[id] = {};
+  moduleSettings[id][key] = value;
+  applyModule(id);
+  persistModules();
+}
+$('btn-module-close').addEventListener('click', () => $('module-dialog').close());
+// Keep the module editor's "Show this module" toggle truthful when a
+// panel is hidden/shown from the context menu (the layout is the source
+// of truth for visibility; this just mirrors it into module settings).
+function syncModuleVisible(panelEl, visible) {
+  const modEl = panelEl.closest ? panelEl.closest('[data-module]') : null;
+  const id = modEl && modEl.dataset.module;
+  if (id && MODULES[id]) {
+    if (!moduleSettings[id]) moduleSettings[id] = {};
+    moduleSettings[id].visible = visible;
+    persistModules();
+  }
+}
+function showModuleMenu(x, y, target) {
+  const menu = $('module-menu');
+  const modEl = target.closest ? target.closest('[data-module]') : null;
+  const panelEl = target.closest ? target.closest('[data-layout-panel]') : null;
+  const items = [];
+  if (modEl) {
+    const id = modEl.dataset.module;
+    const name = (MODULES[id] && MODULES[id].name) || modEl.dataset.moduleName || id;
+    if (MODULES[id]) items.push({ label: `Edit ${name}…`, run: () => openModuleEditor(id) });
+    else items.push({ label: name, head: true });
+  }
+  if (panelEl && window.PulseLayout) {
+    items.push({
+      label: 'Hide this panel', run: () => {
+        window.PulseLayout.hidePanel(panelEl);
+        syncModuleVisible(panelEl, false);
+      },
+    });
+  }
+  const hidden = window.PulseLayout ? window.PulseLayout.hiddenPanels() : [];
+  if (hidden.length) {
+    items.push({ sep: true });
+    items.push({ label: 'SHOW HIDDEN PANEL', head: true });
+    for (const h of hidden) items.push({
+      label: '▸ ' + h.name, run: () => {
+        window.PulseLayout.showPanel(h.key);
+        const el = document.querySelector(`[data-layout-panel="${h.key}"]`);
+        if (el) syncModuleVisible(el, true);
+      },
+    });
+  }
+  items.push({ sep: true });
+  items.push({ label: 'Reset layout', run: () => window.PulseLayout && window.PulseLayout.resetLayout() });
+  menu.innerHTML = '';
+  for (const it of items) {
+    if (it.sep) { const hr = document.createElement('div'); hr.style.cssText = 'border-top:1px solid var(--app-border);margin:4px 0;'; menu.appendChild(hr); continue; }
+    if (it.head) { const hd = document.createElement('div'); hd.className = 'menu-head'; hd.textContent = it.label; menu.appendChild(hd); continue; }
+    const b = document.createElement('button');
+    b.className = 'paper-menu-item'; b.textContent = it.label;
+    b.addEventListener('click', () => { menu.hidden = true; it.run(); });
+    menu.appendChild(b);
+  }
+  menu.hidden = false;
+  const mw = 260, mh = Math.min(400, items.length * 36 + 16);
+  menu.style.left = Math.min(x, window.innerWidth - mw - 8) + 'px';
+  menu.style.top = Math.min(y, window.innerHeight - mh - 8) + 'px';
+}
+document.addEventListener('contextmenu', (e) => {
+  // v0.2.6: right-click a module or panel to edit it. Outside the panels
+  // (tab bar, transport) the browser menu stays as it was.
+  const t = e.target.closest ? e.target.closest('[data-module], [data-layout-panel], .panel') : null;
+  if (!t) return;
+  e.preventDefault();
+  showModuleMenu(e.clientX, e.clientY, e.target);
+});
+document.addEventListener('click', (e) => {
+  const menu = $('module-menu');
+  if (menu && !menu.hidden && !menu.contains(e.target)) menu.hidden = true;
+  if (!e.target.closest) return;
+  // Click a module's title bar (or the spectrum/waveform canvas) to edit it.
+  if (e.target.closest('button, input, select, .drag-grip, .resize-grip')) return;
+  const canvas = e.target.closest('canvas[data-module]');
+  if (canvas) { openModuleEditor(canvas.dataset.module); return; }
+  const title = e.target.closest('.pane-title, .code-head, .layers-head');
+  const modEl = title && title.closest('[data-module]');
+  if (modEl && MODULES[modEl.dataset.module]) openModuleEditor(modEl.dataset.module);
+});
+document.addEventListener('dblclick', (e) => {
+  if (!e.target.closest) return;
+  const modEl = e.target.closest('[data-module]');
+  if (modEl && MODULES[modEl.dataset.module]) openModuleEditor(modEl.dataset.module);
+});
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'Escape') { const menu = $('module-menu'); if (menu) menu.hidden = true; }
+});
 
 /* ---------- shared render loop (one heartbeat, Felhaven's Kairos) ---------- */
 let lastCodeUpdate = 0;
@@ -1968,6 +2425,44 @@ function togglePresent() {
   if (activeTab !== 'visualize') setTab('visualize');
   setPresenting(!state.presenting);
 }
+/* ---------- Visualize fullscreen (v0.2.6) ----------
+   Different from presentation mode: fullscreen fills the SCREEN with the
+   stage (browser fullscreen API on the tab), the tab bar + transport hide,
+   and the panels (code, layers, options) stay on top — draggable, so you
+   can park them where you want. Esc or the button exits. */
+function setVizFullscreen(on) {
+  const tab = $('tab-visualize');
+  if (on) {
+    if (activeTab !== 'visualize') setTab('visualize');
+    state.vizFullscreen = true;
+    document.body.classList.add('viz-fullscreen');
+    tab.classList.add('viz-fullscreen');
+    if (tab.requestFullscreen) tab.requestFullscreen().catch(() => {});
+    setTimeout(resize, 100);
+  } else {
+    state.vizFullscreen = false;
+    document.body.classList.remove('viz-fullscreen');
+    tab.classList.remove('viz-fullscreen');
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    setTimeout(resize, 100);
+  }
+}
+function toggleVizFullscreen() { setVizFullscreen(!state.vizFullscreen); }
+$('btn-viz-fullscreen').addEventListener('click', toggleVizFullscreen);
+document.addEventListener('fullscreenchange', () => {
+  // The user pressed Esc in browser fullscreen: drop the app-side class too.
+  if (!document.fullscreenElement && state.vizFullscreen) {
+    state.vizFullscreen = false;
+    document.body.classList.remove('viz-fullscreen');
+    $('tab-visualize').classList.remove('viz-fullscreen');
+    setTimeout(resize, 100);
+  }
+});
+$('btn-mc-collapse').addEventListener('click', () => {
+  const mc = $('play-mc');
+  mc.classList.toggle('collapsed');
+  $('btn-mc-collapse').textContent = mc.classList.contains('collapsed') ? '▸ Expand' : '▾ Collapse';
+});
 function render() {
   const w = canvas.width, h = canvas.height;
   const t = THEMES[state.theme];
@@ -2040,6 +2535,10 @@ function render() {
       drawMeshScene(pad, top, cw, ch, audio);
     } else if (state.look === 'glitch') {
       drawGlitchScene(pad, top, cw, ch, audio);
+    } else if (window.PULSE_SCENES_026 && window.PULSE_SCENES_026.draw[state.look]) {
+      // v0.2.6: the 37 new scenes live in scenes-026.js and draw from the
+      // same audio bundle as the original 13.
+      drawScene026(state.look, pad, top, cw, ch, audio);
     } else {
       const gap = 14, halfW = (cw - gap) / 2, halfH = (ch - gap) / 2;
       drawPanel(pad, top, halfW, halfH, 'WAVEFORM');
@@ -2061,14 +2560,15 @@ function render() {
     drawMiniSpectrum();
     drawMiniWave();
     updateLyrics();
+    // v0.2.6: Mission Control lives in the Play tab now — the map, x-ray,
+    // tiles, code + hex update with the player, on the same heartbeat.
+    updateMissionControl();
   } else if (activeTab === 'glitch') {
     renderGlitchPreview();
   } else if (activeTab === 'ascii') {
     renderAscii();
   } else if (activeTab === 'cut') {
     updateCutPreview();
-  } else if (activeTab === 'mission') {
-    updateMissionControl();
   }
 
   // AUDIO CORRUPT (Glitch tab): corrupt a few bytes on every kick while
@@ -2098,7 +2598,7 @@ function render() {
 requestAnimationFrame(render);
 
 /* ---------- tab switching (native .paper-tab buttons, v0.2.4) ---------- */
-const TAB_ORDER = ['play', 'visualize', 'glitch', 'ascii', 'cut', 'cook', 'mission'];
+const TAB_ORDER = ['play', 'visualize', 'glitch', 'ascii', 'cut', 'cook'];
 function setTab(tab) {
   activeTab = tab;
   if (tab !== 'visualize' && state.presenting) setPresenting(false);
@@ -2162,19 +2662,23 @@ function drawMcMap() {
   g.font = '700 10px "Paper Mono", monospace'; g.fillStyle = '#64748b';
   g.fillText(state.sysAudio ? 'SOURCE: SYSTEM AUDIO' : (state.trackName ? 'SOURCE: ' + state.trackName : 'SOURCE: —'), 8, 14);
   const now = performance.now();
-  mc.blips = mc.blips.filter((b) => now - b.born < 2600);
+  // v0.2.6: the live map is a module — blip size + trail come from its editor.
+  const mapVals = moduleVals('live-map');
+  const trailMs = (Number(mapVals.trail) || 2.6) * 1000;
+  const blipScale = Number(mapVals.blipSize) || 1;
+  mc.blips = mc.blips.filter((b) => now - b.born < trailMs);
   for (const b of mc.blips) {
-    const age = (now - b.born) / 2600;
+    const age = (now - b.born) / trailMs;
     const a = 1 - age;
     const color = MC_BLIP_COLORS[b.type] || '#fff';
     g.strokeStyle = color; g.globalAlpha = a * 0.35; g.lineWidth = 1;
     g.beginPath(); g.moveTo(sx, sy); g.lineTo(b.x, b.y); g.stroke();
-    const r = 4 + age * 26;
+    const r = (4 + age * 26) * blipScale;
     g.globalAlpha = a * 0.8;
     g.beginPath(); g.arc(b.x, b.y, r, 0, Math.PI * 2); g.stroke();
     g.globalAlpha = a;
     g.fillStyle = color;
-    g.beginPath(); g.arc(b.x, b.y, 3 + b.s * 3, 0, Math.PI * 2); g.fill();
+    g.beginPath(); g.arc(b.x, b.y, (3 + b.s * 3) * blipScale, 0, Math.PI * 2); g.fill();
     g.font = '700 10px "Paper Mono", monospace';
     g.fillText(MC_BLIP_LABELS[b.type] || b.type.toUpperCase(), b.x + 8, b.y + 3);
     g.globalAlpha = 1;
@@ -2192,10 +2696,10 @@ function updateMcXray() {
   set('xray-decode-sub', state.buffer ? `${state.trackName} · ${fmt(state.duration)}` : (state.videoMode ? 'video' : '—'));
   let peak = 0;
   for (let i = 0; i < freqData.length; i++) if (freqData[i] > peak) peak = freqData[i];
-  set('xray-fft', state.analyser ? '2048 pt' : '—');
-  set('xray-fft-sub', state.analyser ? `1024 bins · peak ${peak}/255 · low ${state.smoothLow.toFixed(2)} mid ${state.smoothMid.toFixed(2)} high ${state.smoothHigh.toFixed(2)}` : '—');
+  set('xray-fft', state.analyser ? '4096 pt' : '—');
+  set('xray-fft-sub', state.analyser ? `2048 bins · peak ${peak}/255 · low ${state.smoothLow.toFixed(2)} mid ${state.smoothMid.toFixed(2)} high ${state.smoothHigh.toFixed(2)}${analysis ? ` · centroid ${Math.round(analysis.centroid)} Hz · flux ${analysis.flux.toFixed(2)} · rms ${analysis.rms.toFixed(3)}` : ''}` : '—');
   set('xray-detect', analysis && analysis.bpmLocked ? `~${Math.round(analysis.bpm)} BPM` : (analysis ? 'finding beat…' : '—'));
-  set('xray-detect-sub', analysis ? `${analysis.chord ? analysis.chord.name : '—'} · ${analysis.key ? TA_NOTES[analysis.key.root] + ':' + analysis.key.mode : '—'} · ${analysis.onsets.length} onsets · ${analysis.section || '—'}` : '—');
+  set('xray-detect-sub', analysis ? `${analysis.chord ? analysis.chord.name : '—'} · ${analysis.key ? TA_NOTES[analysis.key.root] + ':' + analysis.key.mode : '—'} · ${analysis.onsets.length} onsets · ${analysis.section || '—'}${analysis.sections.length ? ` · ${analysis.sections.length} sections` : ''}${analysis.instruments ? ` · vox ${analysis.instruments.vocals.toFixed(2)} drm ${analysis.instruments.drums.toFixed(2)} gtr ${analysis.instruments.guitar.toFixed(2)}` : ''}` : '—');
   const enabledLayers = layers.stack.filter((l) => l.enabled);
   set('xray-layers', `${state.look.toUpperCase()} · ${layers.stack.length} layer${layers.stack.length === 1 ? '' : 's'}`);
   set('xray-layers-sub', enabledLayers.length ? enabledLayers.map((l) => LAYER_TYPES[l.type].label).join(' → ') : 'no layers — look plays clean');
@@ -3237,6 +3741,9 @@ const cook = {
   lastSort: 0, lastDither: 0, lastTiles: 0, trackY: 0,
   lastGradmap: 0, lastGeo: 0, lastMesh: 0, gradLut: null,
   lastStyle: 0, lastParallax: 0, lastDepthBlur: 0,
+  // v0.2.6: base = the cumulative cook state; work = base + live effects.
+  base: null, baseCtx: null, dispEnv: 0,
+  lastPosterize: 0, lastSolarize: 0, mirrorFlip: false, mirrorArmed: false,
   depthView: 'photo', // 'photo' | 'map' | 'heat'
   depthCanvas: null, depthHeatCanvas: null, nearMask: null, farMask: null,
 };
@@ -3383,6 +3890,10 @@ async function loadCookImage(filePath) {
   cook.work = document.createElement('canvas'); cook.work.width = cook.W; cook.work.height = cook.H;
   cook.workCtx = cook.work.getContext('2d', { willReadFrequently: true });
   cook.workCtx.drawImage(cook.src, 0, 0);
+  cook.base = document.createElement('canvas'); cook.base.width = cook.W; cook.base.height = cook.H;
+  cook.baseCtx = cook.base.getContext('2d', { willReadFrequently: true });
+  cook.baseCtx.drawImage(cook.src, 0, 0);
+  cook.dispEnv = 0; cook.mirrorFlip = false; cook.mirrorArmed = false;
   cook.imgEl = img; cook.image = filePath; cook.imageName = filePath.split(/[\\/]/).pop();
   cook.active = false; cook.done = false; cook.cookLevel = 0;
   // A new photo invalidates the old depth map and masks.
@@ -3403,8 +3914,11 @@ async function loadCookImage(filePath) {
 }
 function startCook() {
   if (!cook.work || !cookHasSong()) return;
-  // Fresh cook each start: the working copy resets to the original photo.
+  // Fresh cook each start: the working copy AND the cumulative base
+  // reset to the original photo.
   cook.workCtx.drawImage(cook.src, 0, 0);
+  if (cook.baseCtx) cook.baseCtx.drawImage(cook.src, 0, 0);
+  cook.dispEnv = 0;
   cook.active = true; cook.done = false; cook.startedAt = performance.now();
   cook.cookLevel = 0; cook.wasPlaying = false; cook.trackY = 0;
   $('cook-progress-text').textContent = `Cooking on ${cookSongName()}…`;
@@ -3413,6 +3927,9 @@ function startCook() {
 function stopCook() {
   if (!cook.active) return;
   cook.active = false; cook.done = true;
+  // The live effects relax: the finished frame is the cumulative base.
+  if (cook.base) cook.workCtx.drawImage(cook.base, 0, 0);
+  drawCookDisplay();
   $('cook-progress-text').textContent = `Cooked — ${cookSongName()} is done (or stopped). Download the JPEG, or start again for a fresh cook.`;
   $('cook-meter').textContent = `cook level: ${Math.round(cook.cookLevel)}%`;
   updateCookButtons();
@@ -3424,35 +3941,33 @@ function cookFrame() {
   if (cook.wasPlaying && !playing && !state.sysAudio && state.buffer && state.offset < 0.1) { stopCook(); return; }
   cook.wasPlaying = playing;
   if (!playing) return;
+  // v0.2.6: TWO canvases now. cook.base is the CUMULATIVE state — the
+  // effects that bake in (sort, tiles, gradmap, geo, dither, style pass,
+  // grain, halftone, mesh, CRT) write there. cook.work is re-rendered
+  // from base every frame, and the LIVE effects (warp, displacement and
+  // the new ones) apply on top of it with their amount tied to the live
+  // music level — so they breathe with the song and relax when it quiets,
+  // instead of compounding to 100% and stopping (the old bug: warp
+  // re-drew the already-warped canvas, displacement shredded already-
+  // shredded bands).
+  if (!cook.base) {
+    cook.base = document.createElement('canvas'); cook.base.width = cook.W; cook.base.height = cook.H;
+    cook.baseCtx = cook.base.getContext('2d', { willReadFrequently: true });
+    cook.baseCtx.drawImage(cook.src, 0, 0);
+  }
   const intensity = Number($('cook-intensity').value) / 100;
   const kick = analysis ? analysis.kickPulse : state.beat;
   const bass = state.smoothLow;
   const level = analysis ? analysis.level : (state.smoothLow + state.smoothMid) / 2;
-  const W = cook.W, H = cook.H, c = cook.workCtx;
+  const W = cook.W, H = cook.H, c = cook.workCtx, b = cook.baseCtx;
   const now = performance.now();
-  // Beat displacement: nudge random horizontal bands on the kick.
-  if ($('cook-fx-displace').checked && kick > 0.55) {
-    const bands = 3 + Math.floor(Math.random() * 5);
-    for (let i = 0; i < bands; i++) {
-      const sy = Math.floor(Math.random() * (H - 8));
-      const bh = 4 + Math.floor(Math.random() * 18);
-      const dx = Math.round((Math.random() - 0.5) * 44 * intensity * kick);
-      if (dx) c.drawImage(cook.work, 0, sy, W, bh, dx, sy, W, bh);
-    }
-  }
-  // Bass color warp: cumulative hue drift + saturation riding the bass.
-  if ($('cook-fx-warp').checked && bass > 0.12) {
-    const deg = (bass * 26 * intensity).toFixed(1);
-    c.filter = `hue-rotate(${deg}deg) saturate(${1 + bass * 0.6 * intensity})`;
-    c.drawImage(cook.work, 0, 0);
-    c.filter = 'none';
-  }
+  // --- CUMULATIVE pass: everything below writes to cook.base ---
   // Pixel sort: a strip of rows, throttled, driven by the dynamics.
   if ($('cook-fx-sort').checked && level > 0.08 && now - cook.lastSort > 150) {
     cook.lastSort = now;
     const y0 = Math.floor(Math.random() * (H - 40));
     const stripH = 40;
-    const img = c.getImageData(0, y0, W, stripH);
+    const img = b.getImageData(0, y0, W, stripH);
     const d = img.data;
     for (let y = 0; y < stripH; y += 2) {
       let x = 0;
@@ -3463,12 +3978,12 @@ function cookFrame() {
           const i = (y * W + x + k) * 4;
           seg.push([d[i] * 0.3 + d[i + 1] * 0.6 + d[i + 2] * 0.1, d[i], d[i + 1], d[i + 2]]);
         }
-        seg.sort((a, b) => a[0] - b[0]);
+        seg.sort((a, b2) => a[0] - b2[0]);
         seg.forEach((px, k) => { const i = (y * W + x + k) * 4; d[i] = px[1]; d[i + 1] = px[2]; d[i + 2] = px[3]; });
         x += segLen;
       }
     }
-    c.putImageData(img, 0, y0);
+    b.putImageData(img, 0, y0);
   }
   // Corrupt tiles: copy a few tiles with an offset on the kick.
   if ($('cook-fx-tiles').checked && kick > 0.5 && now - cook.lastTiles > 200) {
@@ -3477,25 +3992,25 @@ function cookFrame() {
     for (let n = 0; n < 4; n++) {
       const sx = Math.floor(Math.random() * (W - tw)), sy = Math.floor(Math.random() * (H - th));
       const dx = sx + (Math.random() < 0.5 ? -1 : 1) * (8 + Math.floor(Math.random() * 40 * intensity));
-      c.drawImage(cook.work, sx, sy, tw, th, dx, sy, tw, th);
+      b.drawImage(cook.base, sx, sy, tw, th, dx, sy, tw, th);
     }
   }
   // CRT / VHS: bake scanlines + a slow rolling tracking band.
   if ($('cook-fx-crt').checked) {
-    c.fillStyle = 'rgba(0,0,0,0.16)';
-    for (let n = 0; n < 3; n++) c.fillRect(0, Math.floor(Math.random() * H), W, 1);
+    b.fillStyle = 'rgba(0,0,0,0.16)';
+    for (let n = 0; n < 3; n++) b.fillRect(0, Math.floor(Math.random() * H), W, 1);
     cook.trackY = (cook.trackY + 2) % (H + 80);
     const by = cook.trackY - 40;
-    const grad = c.createLinearGradient(0, by - 14, 0, by + 14);
+    const grad = b.createLinearGradient(0, by - 14, 0, by + 14);
     grad.addColorStop(0, 'rgba(255,255,255,0)'); grad.addColorStop(0.5, 'rgba(255,255,255,0.05)'); grad.addColorStop(1, 'rgba(255,255,255,0)');
-    c.fillStyle = grad; c.fillRect(0, by - 14, W, 28);
+    b.fillStyle = grad; b.fillRect(0, by - 14, W, 28);
   }
   // Dither: Bayer-threshold a random strip, gradually.
   if ($('cook-fx-dither').checked && now - cook.lastDither > 500) {
     cook.lastDither = now;
     const B = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]];
     const y0 = Math.floor(Math.random() * (H - 60));
-    const img = c.getImageData(0, y0, W, 60);
+    const img = b.getImageData(0, y0, W, 60);
     const d = img.data;
     for (let y = 0; y < 60; y++) {
       for (let x = 0; x < W; x++) {
@@ -3505,58 +4020,58 @@ function cookFrame() {
         d[i] = on; d[i + 1] = on === 235 ? 245 : 10; d[i + 2] = on === 235 ? 255 : 16;
       }
     }
-    c.putImageData(img, 0, y0);
+    b.putImageData(img, 0, y0);
   }
   // Gradient map (Gradient Lab): recolor the whole frame through a gradient
   // — shadows take one colour, highlights another. Full-frame, throttled.
   if ($('cook-fx-gradmap').checked && now - cook.lastGradmap > 500) {
     cook.lastGradmap = now;
     if (!cook.gradLut) cook.gradLut = gradmapLut(GRADMAP_PALETTES.riso.stops);
-    const img = c.getImageData(0, 0, W, H);
+    const img = b.getImageData(0, 0, W, H);
     const d = img.data, lut = cook.gradLut;
     for (let i = 0; i < d.length; i += 4) {
       const lum = Math.round(d[i] * 0.3 + d[i + 1] * 0.6 + d[i + 2] * 0.1);
       d[i] = lut[lum * 3]; d[i + 1] = lut[lum * 3 + 1]; d[i + 2] = lut[lum * 3 + 2];
     }
-    c.putImageData(img, 0, 0);
+    b.putImageData(img, 0, 0);
   }
   // Grain: film grain baked in from the pre-rendered noise tile.
   if ($('cook-fx-grain').checked) {
-    c.save();
-    c.globalCompositeOperation = 'overlay';
-    c.globalAlpha = 0.10 + 0.12 * intensity;
+    b.save();
+    b.globalCompositeOperation = 'overlay';
+    b.globalAlpha = 0.10 + 0.12 * intensity;
     const ox = Math.floor(Math.random() * 128), oy = Math.floor(Math.random() * 128);
-    c.translate(-ox, -oy);
-    c.fillStyle = c.createPattern(grainTile, 'repeat');
-    c.fillRect(0, 0, W + 128, H + 128);
-    c.restore();
+    b.translate(-ox, -oy);
+    b.fillStyle = b.createPattern(grainTile, 'repeat');
+    b.fillRect(0, 0, W + 128, H + 128);
+    b.restore();
   }
   // Halftone: print dots over the image.
   if ($('cook-fx-halftone').checked) {
-    c.save();
-    c.globalCompositeOperation = 'multiply';
-    c.globalAlpha = 0.16;
-    c.fillStyle = c.createPattern(halftoneTile, 'repeat');
-    c.fillRect(0, 0, W, H);
-    c.restore();
+    b.save();
+    b.globalCompositeOperation = 'multiply';
+    b.globalAlpha = 0.16;
+    b.fillStyle = b.createPattern(halftoneTile, 'repeat');
+    b.fillRect(0, 0, W, H);
+    b.restore();
   }
   // Geometric shapes: the photo re-drawn as triangles, throttled.
   if ($('cook-fx-geo').checked && now - cook.lastGeo > 300) {
     cook.lastGeo = now;
     const cell = 22;
-    const img = c.getImageData(0, 0, W, H);
+    const img = b.getImageData(0, 0, W, H);
     const d = img.data;
     for (let gy = 0; gy + cell <= H; gy += cell) {
       for (let gx = 0; gx + cell <= W; gx += cell) {
         const i = (gy * W + gx) * 4;
         const r = d[i], g2 = d[i + 1], b2 = d[i + 2];
         const s = cell * (0.7 + state.smoothLow * 0.5);
-        c.fillStyle = `rgb(${r},${g2},${b2})`;
-        c.save();
-        c.translate(gx + cell / 2, gy + cell / 2);
-        c.rotate(Math.sin(now / 700 + gx + gy) * 0.25);
-        c.beginPath(); c.moveTo(0, -s / 2); c.lineTo(s / 2, s / 2); c.lineTo(-s / 2, s / 2); c.closePath(); c.fill();
-        c.restore();
+        b.fillStyle = `rgb(${r},${g2},${b2})`;
+        b.save();
+        b.translate(gx + cell / 2, gy + cell / 2);
+        b.rotate(Math.sin(now / 700 + gx + gy) * 0.25);
+        b.beginPath(); b.moveTo(0, -s / 2); b.lineTo(s / 2, s / 2); b.lineTo(-s / 2, s / 2); b.closePath(); b.fill();
+        b.restore();
       }
     }
   }
@@ -3564,20 +4079,49 @@ function cookFrame() {
   if ($('cook-fx-mesh').checked && now - cook.lastMesh > 400) {
     cook.lastMesh = now;
     const pal = MESH_PALETTES.aurora.colors;
-    c.save();
-    c.globalCompositeOperation = 'soft-light';
+    b.save();
+    b.globalCompositeOperation = 'soft-light';
     for (let i = 0; i < 3; i++) {
       const nx = (0.25 + 0.25 * i + Math.sin(now / 900 + i * 2) * 0.08) * W;
       const ny = (0.3 + (i % 2) * 0.35 + Math.cos(now / 1100 + i) * 0.06) * H;
       const r = Math.min(W, H) * 0.5 * (1 + bass * 0.4 + kick * 0.2);
-      const grad = c.createRadialGradient(nx, ny, 0, nx, ny, r);
+      const grad = b.createRadialGradient(nx, ny, 0, nx, ny, r);
       grad.addColorStop(0, pal[i % pal.length]);
       grad.addColorStop(1, 'rgba(0,0,0,0)');
-      c.globalAlpha = 0.5;
-      c.fillStyle = grad;
-      c.fillRect(nx - r, ny - r, r * 2, r * 2);
+      b.globalAlpha = 0.5;
+      b.fillStyle = grad;
+      b.fillRect(nx - r, ny - r, r * 2, r * 2);
     }
-    c.restore();
+    b.restore();
+  }
+  // Posterize (v0.2.6): flat colour bands in a random strip — the step
+  // count follows the level, so loud moments posterize harder.
+  if ($('cook-fx-posterize') && $('cook-fx-posterize').checked && now - cook.lastPosterize > 400) {
+    cook.lastPosterize = now;
+    const steps = 2 + Math.floor(level * 6);
+    const y0 = Math.floor(Math.random() * (H - 60));
+    const img = b.getImageData(0, y0, W, 60);
+    const d = img.data;
+    for (let i = 0; i < d.length; i += 4) {
+      d[i] = Math.round(d[i] / 255 * (steps - 1)) / (steps - 1) * 255;
+      d[i + 1] = Math.round(d[i + 1] / 255 * (steps - 1)) / (steps - 1) * 255;
+      d[i + 2] = Math.round(d[i + 2] / 255 * (steps - 1)) / (steps - 1) * 255;
+    }
+    b.putImageData(img, 0, y0);
+  }
+  // Solarize (v0.2.6): brights invert past a threshold that rides the level.
+  if ($('cook-fx-solarize') && $('cook-fx-solarize').checked && now - cook.lastSolarize > 500) {
+    cook.lastSolarize = now;
+    const thr = 255 * (0.35 + level * 0.4);
+    const y0 = Math.floor(Math.random() * (H - 60));
+    const img = b.getImageData(0, y0, W, 60);
+    const d = img.data;
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i] > thr) d[i] = 255 - d[i];
+      if (d[i + 1] > thr) d[i + 1] = 255 - d[i + 1];
+      if (d[i + 2] > thr) d[i + 2] = 255 - d[i + 2];
+    }
+    b.putImageData(img, 0, y0);
   }
   // Style pass (ASCII library): re-render the working photo in the chosen
   // style, baked in cumulatively like every other cook effect. The style
@@ -3590,7 +4134,7 @@ function cookFrame() {
     const off = document.createElement('canvas');
     off.width = cols; off.height = rows;
     const octx = off.getContext('2d', { willReadFrequently: true });
-    octx.drawImage(cook.work, 0, 0, cols, rows);
+    octx.drawImage(cook.base, 0, 0, cols, rows);
     const data = octx.getImageData(0, 0, cols, rows).data;
     const opts = {
       palette: $('ascii-palette').value, ditherAlgo: $('ascii-dither-algo').value,
@@ -3603,11 +4147,87 @@ function cookFrame() {
     const styled = document.createElement('canvas');
     renderAsciiStyleInto(styled, styled.getContext('2d'), data, cols, rows, opts);
     // Blend the styled render back in (not a hard replace — it cooks in).
+    b.save();
+    b.globalAlpha = 0.35 + 0.45 * intensity;
+    b.imageSmoothingEnabled = true;
+    b.drawImage(styled, 0, 0, W, H);
+    b.restore();
+  }
+  // --- LIVE pass: re-render work from base, then the live effects ---
+  c.drawImage(cook.base, 0, 0);
+  // Bass color warp: ABSOLUTE hue/saturation from the CURRENT bass —
+  // applied to the base each frame, so it relaxes when the bass drops.
+  if ($('cook-fx-warp').checked) {
+    const deg = (bass * 120 * intensity).toFixed(1);
+    c.filter = `hue-rotate(${deg}deg) saturate(${(1 + bass * 0.8 * intensity).toFixed(2)})`;
+    c.drawImage(cook.base, 0, 0);
+    c.filter = 'none';
+  }
+  // Beat displacement: bands nudged by a DECAYING kick envelope — the
+  // nudge rises on the kick and falls back, so the image never shreds
+  // itself into a permanent mess.
+  cook.dispEnv = Math.max(kick, (cook.dispEnv || 0) * 0.92);
+  if ($('cook-fx-displace').checked && cook.dispEnv > 0.05) {
+    const bands = 3 + Math.floor(Math.random() * 5);
+    for (let i = 0; i < bands; i++) {
+      const sy = Math.floor(Math.random() * (H - 8));
+      const bh = 4 + Math.floor(Math.random() * 18);
+      const dx = Math.round((Math.random() - 0.5) * 44 * intensity * cook.dispEnv);
+      if (dx) c.drawImage(cook.work, 0, sy, W, bh, dx, sy, W, bh);
+    }
+  }
+  // Wave warp (v0.2.6): sine ripple, amplitude follows the bass.
+  if ($('cook-fx-wave') && $('cook-fx-wave').checked && bass > 0.05) {
+    const amp = bass * 14 * intensity;
+    const stripH = 8;
+    for (let y = 0; y < H; y += stripH) {
+      const dx = Math.round(Math.sin(y * 0.05 + now / 300) * amp);
+      if (dx) c.drawImage(cook.work, 0, y, W, stripH, dx, y, W, stripH);
+    }
+  }
+  // Mirror (v0.2.6): the photo mirrors itself; the axis flips on the kick.
+  if ($('cook-fx-mirror') && $('cook-fx-mirror').checked) {
+    if (kick > 0.7 && !cook.mirrorArmed) { cook.mirrorFlip = !cook.mirrorFlip; cook.mirrorArmed = true; }
+    if (kick < 0.3) cook.mirrorArmed = false;
     c.save();
-    c.globalAlpha = 0.35 + 0.45 * intensity;
-    c.imageSmoothingEnabled = true;
-    c.drawImage(styled, 0, 0, W, H);
+    if (cook.mirrorFlip) { c.translate(W, 0); c.scale(-1, 1); }
+    else { c.translate(0, H); c.scale(1, -1); }
+    c.globalAlpha = 0.5;
+    c.drawImage(cook.work, 0, 0);
     c.restore();
+  }
+  // Chromatic split (v0.2.6): ghosted copies pull apart with the bass.
+  if ($('cook-fx-chroma') && $('cook-fx-chroma').checked && bass > 0.05) {
+    const dx = Math.round(bass * 12 * intensity);
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    c.globalAlpha = 0.4;
+    c.drawImage(cook.work, dx, 0);
+    c.drawImage(cook.work, -dx, 0);
+    c.restore();
+  }
+  // Swirl (v0.2.6): the centre twists with the kick.
+  if ($('cook-fx-swirl') && $('cook-fx-swirl').checked && kick > 0.1) {
+    const r = Math.min(W, H) * 0.45;
+    c.save();
+    c.beginPath(); c.arc(W / 2, H / 2, r, 0, Math.PI * 2); c.clip();
+    c.translate(W / 2, H / 2);
+    c.rotate(kick * 0.35 * intensity);
+    c.drawImage(cook.work, -W / 2, -H / 2);
+    c.restore();
+  }
+  // Slit-scan (v0.2.6): a vertical slice scrolls across with the beat phase.
+  if ($('cook-fx-slitscan') && $('cook-fx-slitscan').checked) {
+    const phase = analysis && analysis.beatPhase >= 0 ? analysis.beatPhase : (now % 2000) / 2000;
+    const sx = Math.floor(phase * (W - 12));
+    c.drawImage(cook.work, sx, 0, 12, H, sx + 8, 0, 12, H);
+  }
+  // Vignette burn (v0.2.6): the edges darken as the level rises.
+  if ($('cook-fx-vignette') && $('cook-fx-vignette').checked && level > 0.05) {
+    const grad = c.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.3, W / 2, H / 2, Math.max(W, H) * 0.72);
+    grad.addColorStop(0, 'rgba(0,0,0,0)');
+    grad.addColorStop(1, `rgba(0,0,0,${(level * 0.7 * intensity).toFixed(2)})`);
+    c.fillStyle = grad; c.fillRect(0, 0, W, H);
   }
   // Depth parallax: foreground and background sway apart with the beat.
   const parAmt = Number($('cook-depth-parallax').value) / 100;
@@ -3616,7 +4236,7 @@ function cookFrame() {
     const dx = Math.round((6 + kick * 22) * parAmt * intensity * (Math.random() < 0.5 ? -1 : 1));
     const snap = document.createElement('canvas'); snap.width = W; snap.height = H;
     const sctx = snap.getContext('2d');
-    sctx.drawImage(cook.work, 0, 0);
+    sctx.drawImage(cook.base, 0, 0);
     const layer = (mask, off) => {
       const lc = document.createElement('canvas'); lc.width = W; lc.height = H;
       const lctx = lc.getContext('2d');
@@ -3636,7 +4256,7 @@ function cookFrame() {
     cook.lastDepthBlur = now;
     const snap = document.createElement('canvas'); snap.width = W; snap.height = H;
     const sctx = snap.getContext('2d');
-    sctx.drawImage(cook.work, 0, 0);
+    sctx.drawImage(cook.base, 0, 0);
     const lc = document.createElement('canvas'); lc.width = W; lc.height = H;
     const lctx = lc.getContext('2d');
     lctx.filter = `blur(${(1 + bass * 9).toFixed(1)}px)`;
@@ -3662,6 +4282,7 @@ function cookFrame() {
   updateCookButtons();
   drawCookDisplay();
 }
+
 function drawCookDisplay() {
   const c = $('cook-canvas');
   if (!c || !cook.work) return;
@@ -3858,11 +4479,14 @@ $('btn-code-toggle').addEventListener('click', () => {
 });
 updateSysAudioUI();
 
-/* ---------- restore saved state (theme, library folder) ---------- */
+/* ---------- restore saved state (theme, library folder, layout) ---------- */
 window.pulse.getConfig().then((cfg) => {
   if (!cfg) return;
   if (cfg.theme && THEMES[cfg.theme]) applyTheme(cfg.theme);
   if (cfg.libraryDir) libraryBrowse(cfg.libraryDir);
+  // v0.2.6: panel layout (drag order, sizes, hidden panels) restores here.
+  if (window.PulseLayout) window.PulseLayout.init(cfg);
+  if (cfg.modules) applyModuleSettings(cfg.modules);
 }).catch(() => {});
 
 /* ---------- pop-out panels: live code editor + hex editor ----------
@@ -3916,6 +4540,7 @@ window.addEventListener('keydown', (e) => {
   if (ae && ae.tagName === 'BUTTON' && (e.code === 'Space' || e.code === 'Enter')) return;
   if (e.code === 'Escape' && state.presenting) { e.preventDefault(); setPresenting(false); return; }
   if ((e.ctrlKey || e.metaKey) && e.code === 'KeyK') { e.preventDefault(); openPalette(); return; }
+  if (e.code === 'KeyF' && e.shiftKey && !e.ctrlKey && !e.metaKey && activeTab === 'visualize') { e.preventDefault(); toggleVizFullscreen(); return; }
   if (e.code === 'KeyF' && !e.ctrlKey && !e.metaKey && activeTab === 'visualize') { e.preventDefault(); togglePresent(); return; }
   if (e.code === 'Slash' && activeTab === 'play') { e.preventDefault(); $('play-filter').focus(); return; }
   if (e.code === 'Space' || e.code === 'KeyP') { e.preventDefault(); togglePlay(); }
@@ -3928,7 +4553,7 @@ window.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.code === 'KeyO') { e.preventDefault(); pickMedia(); return; }
   if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.code === 'KeyC') { e.preventDefault(); window.pulse.popoutOpen('code'); return; }
   if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.code === 'KeyH') { e.preventDefault(); window.pulse.popoutOpen('hex'); return; }
-  if ((e.ctrlKey || e.metaKey) && /^Digit[1-7]$/.test(e.code)) {
+  if ((e.ctrlKey || e.metaKey) && /^Digit[1-6]$/.test(e.code)) {
     e.preventDefault();
     setTab(TAB_ORDER[Number(e.code.slice(5)) - 1]);
     return;
@@ -4027,7 +4652,7 @@ window.pulse.onMenu('menu-tab', setTab);
 
 /* ---------- headless smoke test (?smoke=1) ---------- */
 /* Dev hook: ?demo=<name> — stage a tab for screenshots (like --smoke-test,
-   but visual). demo=ascii-dither | mission | cook-depth | depth-look. */
+   but visual). demo=ascii-dither | mission | play-mc | viz-fullscreen | module-menu | cook-live | cook-depth | depth-look. */
 async function runDemo(name) {
   try {
     if (name === 'ascii-dither') {
@@ -4040,11 +4665,43 @@ async function runDemo(name) {
       $('ascii-palette').value = 'gameboy';
       document.querySelector('.ascii-fx[data-fx="scanlines"]').checked = true;
       setTab('ascii');
-    } else if (name === 'mission') {
+    } else if (name === 'mission' || name === 'play-mc') {
+      // v0.2.6: Mission Control lives in the Play tab now — same staging
+      // (tone playing + a glitched file), viewed in Play.
       addToPlaylist([{ path: '/tmp/pulse-test/tone.wav', name: 'tone.wav' }], false);
       await playAt(0);
       await openGlitchFile('/tmp/pulse-test/gradient.png');
-      setTab('mission');
+      setTab('play');
+      $('play-mc').scrollIntoView();
+    } else if (name === 'viz-fullscreen') {
+      // v0.2.6: fullscreen visualization on a new scene, panels on top.
+      addToPlaylist([{ path: '/tmp/pulse-test/tone.wav', name: 'tone.wav' }], false);
+      await playAt(0);
+      await new Promise((r) => setTimeout(r, 2000));
+      setTab('visualize'); setLook('lab-flow');
+      await new Promise((r) => setTimeout(r, 800));
+      toggleVizFullscreen();
+    } else if (name === 'module-menu') {
+      // v0.2.6: Play tab with the spectrum module's context menu open.
+      addToPlaylist([{ path: '/tmp/pulse-test/tone.wav', name: 'tone.wav' }], false);
+      await playAt(0);
+      await new Promise((r) => setTimeout(r, 1500));
+      setTab('play');
+      await new Promise((r) => setTimeout(r, 500));
+      const c = $('play-spectrum').getBoundingClientRect();
+      showModuleMenu(c.left + c.width / 2, c.top + 40, $('play-spectrum'));
+    } else if (name === 'cook-live') {
+      // v0.2.6: Cook mid-cook on the tone — warp + displacement breathing.
+      await loadCookImage('/tmp/pulse-test/gradient.png');
+      addToPlaylist([{ path: '/tmp/pulse-test/tone.wav', name: 'tone.wav' }], false);
+      await playAt(0);
+      $('cook-fx-warp').checked = true;
+      $('cook-fx-displace').checked = true;
+      $('cook-fx-wave').checked = true;
+      $('cook-fx-mesh').checked = true;
+      updateCookButtons();
+      setTab('cook');
+      startCook();
     } else if (name === 'cook-depth') {
       await loadCookImage('/tmp/pulse-test/gradient.png');
       await cookDepthEstimate('fastdepth');
@@ -4112,7 +4769,7 @@ async function smokeTest() {
     await progress();
   };
   await step('tabs', async () => {
-    for (const t of ['play', 'visualize', 'glitch', 'ascii', 'cut', 'cook', 'mission']) { setTab(t); await new Promise((r) => setTimeout(r, 150)); }
+    for (const t of ['play', 'visualize', 'glitch', 'ascii', 'cut', 'cook']) { setTab(t); await new Promise((r) => setTimeout(r, 150)); }
     setTab('play');
     return { switched: true };
   });
@@ -4132,12 +4789,12 @@ async function smokeTest() {
     res.afterTriplePlay = dbg();
     // Switch through every tab: still one source, position keeps advancing.
     const t0 = currentTime();
-    for (const t of ['visualize', 'glitch', 'ascii', 'cut', 'cook', 'mission', 'play']) { setTab(t); await new Promise((r) => setTimeout(r, 200)); }
+    for (const t of ['visualize', 'glitch', 'ascii', 'cut', 'cook', 'play']) { setTab(t); await new Promise((r) => setTimeout(r, 200)); }
     const t1 = currentTime();
     res.afterTabSwitch = dbg();
     res.positionAdvanced = +(t1 - t0).toFixed(2);
-    // Pause from Mission Control pauses everywhere; play resumes the same track.
-    setTab('mission');
+    // Pause from Play pauses everywhere; play resumes the same track.
+    setTab('play');
     pause();
     await new Promise((r) => setTimeout(r, 200));
     res.afterPause = dbg();
@@ -4275,7 +4932,7 @@ async function smokeTest() {
       mousikiBandsLoaded: typeof mousikiBands === 'function',
       asciiLibLoaded: typeof ditherFrame === 'function' && typeof ASCII_RECIPES !== 'undefined',
       depthLoaded: typeof depthEstimateFromCanvas === 'function',
-      missionTab: !!$('tab-mission'),
+      missionInPlay: !!$('play-mc'),
       depthLook: !!document.querySelector('#lookbar .look-chip[data-look="depth"]'),
       popoutButtons: !!($('btn-code-popout') && $('btn-hex-popout')),
       // v0.2.3: Toaster scenes + TUI status bar + scene line.
@@ -4290,7 +4947,7 @@ async function smokeTest() {
   await step('layout', async () => {
     // v0.2.4: layout-overflow guard at the default 1360 px window — the
     // tab bar / transport / Toaster bar rows must end inside the viewport,
-    // and the SCENES menu holds all 13 chips (hidden until opened).
+    // and the SCENES menu holds all 50 chips (hidden until opened).
     setTab('visualize');
     await new Promise((r) => setTimeout(r, 300));
     // Measure after fonts load: Paper Mono is wider than the fallback
@@ -4327,7 +4984,7 @@ async function smokeTest() {
     });
     res.vizBarAllInside = res.vizBarButtons.every((b) => b.inside);
     res.vizBarH = Math.round(barRect.height);
-    if (!res.tabbarFits || !res.transportFits || !res.vizBarFits || !res.scenesMenuHidden || res.sceneChips !== 13 || !res.vizBarAllInside) R.ok = false;
+    if (!res.tabbarFits || !res.transportFits || !res.vizBarFits || !res.scenesMenuHidden || res.sceneChips !== 50 || !res.vizBarAllInside) R.ok = false;
     return res;
   });
   await step('theme', async () => {
@@ -4345,7 +5002,7 @@ async function smokeTest() {
     res.sunsetBg = bg();
     res.sunsetBar = getComputedStyle($('tabbar')).backgroundColor;
     const perTab = {};
-    for (const t of ['play', 'glitch', 'ascii', 'cut', 'cook', 'mission']) {
+    for (const t of ['play', 'glitch', 'ascii', 'cut', 'cook']) {
       setTab(t);
       await new Promise((r) => setTimeout(r, 120));
       perTab[t] = bg();
@@ -4377,7 +5034,7 @@ async function smokeTest() {
     const panes = [
       ['play', 'library-pane'], ['play', 'playlist-pane'],
       ['glitch', 'glitch-left'], ['ascii', 'ascii-controls'],
-      ['cut', 'cut-controls'], ['cook', 'cook-controls'], ['mission', 'mc-rail']
+      ['cut', 'cut-controls'], ['cook', 'cook-controls'], ['play', 'mc-rail'], ['play', 'mc-main']
     ];
     const res = {};
     for (const [tab, id] of panes) {
@@ -4397,7 +5054,13 @@ async function smokeTest() {
       probe.remove();
       el.scrollTop = 0;
       res[id] = { overflowY, canScroll, scrolled, scrollbarWidth: sbWidth };
-      if (!canScroll || !scrolled || (overflowY !== 'auto' && overflowY !== 'scroll')) R.ok = false;
+      // v0.2.6: a pane fails only if it cannot scroll (wrong overflow) or
+      // if it can scroll but scrolling does not work. A content-height
+      // pane (the MC strip in Play — the tab scrolls instead) legitimately
+      // reports canScroll false even with the probe, because its grid row
+      // grows with the probe; overflow-y: auto is the property that
+      // matters there.
+      if ((overflowY !== 'auto' && overflowY !== 'scroll') || (canScroll && !scrolled)) R.ok = false;
     }
     setTab('play');
     return res;
@@ -4409,7 +5072,7 @@ async function smokeTest() {
     // not an overflow — skip it.
     const res = { offenders: [] };
     const SKIP = new Set(['CANVAS', 'VIDEO', 'SVG', 'IMG', 'INPUT', 'SELECT', 'PROGRESS']);
-    for (const t of ['play', 'visualize', 'glitch', 'ascii', 'cut', 'cook', 'mission']) {
+    for (const t of ['play', 'visualize', 'glitch', 'ascii', 'cut', 'cook']) {
       setTab(t);
       await new Promise((r) => setTimeout(r, 150));
       const panel = $('tab-' + t);
@@ -4435,21 +5098,27 @@ async function smokeTest() {
     return res;
   });
   await step('play-fits', async () => {
-    // v0.2.4: the Mousiki Play tab fits the window — no page scroll at 1360px.
+    // v0.2.6: Play tab scrolls INSIDE itself (Mission Control lives below
+    // the player) — the document never scrolls, the player panels keep
+    // their 320 px height, and the status bar sticks to the bottom.
     setTab('play');
     await new Promise((r) => setTimeout(r, 300));
+    const tab = $('tab-play');
     const res = {
       innerW: window.innerWidth, innerH: window.innerHeight,
       docScrollH: document.documentElement.scrollHeight,
       docScrollW: document.documentElement.scrollWidth,
-      panelsBottom: Math.round($('play-panels').getBoundingClientRect().bottom),
+      tabScrolls: tab.scrollHeight > tab.clientHeight,
+      panelsH: Math.round($('play-panels').getBoundingClientRect().height),
       statusVisible: !!$('play-status') && $('play-status').getBoundingClientRect().bottom <= window.innerHeight + 1,
+      mcInPlay: !!$('play-mc') && $('play-mc').closest('#tab-play') != null,
+      mcHead: !!$('btn-mc-collapse'),
       libraryPresent: !!$('library-list'),
       playSeek: !!$('play-seek'),
       playFilter: !!$('play-filter'),
     };
     res.pageFits = res.docScrollH <= res.innerH + 1 && res.docScrollW <= res.innerW + 1;
-    if (!res.pageFits || !res.statusVisible) R.ok = false;
+    if (!res.pageFits || !res.statusVisible || res.panelsH < 300 || !res.mcInPlay || !res.mcHead) R.ok = false;
     return res;
   });
   await step('cook-top', async () => {
@@ -4632,6 +5301,9 @@ async function smokeTest() {
     $('cook-fx-gradmap').checked = true;
     $('cook-fx-geo').checked = true;
     $('cook-fx-mesh').checked = true;
+    $('cook-fx-wave').checked = true;
+    $('cook-fx-chroma').checked = true;
+    $('cook-fx-posterize').checked = true;
     $('cook-style').value = 'dither';
     updateCookButtons();
     setTab('cook');
@@ -4657,8 +5329,16 @@ async function smokeTest() {
     const isJpeg = !!bytes && bytes[0] === 0xFF && bytes[1] === 0xD8;
     const wasActive = cook.active;
     stopCook();
-    if (stepStates.song !== 'tone.wav' || !wasActive) R.ok = false;
-    return { image: cook.imageName, size: `${cook.W}x${cook.H}`, wasActive, diffSamples: diff, sampled, progress: +progress.toFixed(2), cookLevel: Math.round(cook.cookLevel), jpegPath: out, jpegBytes: bytes ? bytes.length : 0, isJpeg, stepStates };
+    // v0.2.6: after stopping, the live effects relax — work must equal the
+    // cumulative base exactly (warp/displacement no longer pegged in).
+    const bimg = cook.baseCtx.getImageData(0, 0, cook.W, cook.H).data;
+    const wimg2 = cook.workCtx.getImageData(0, 0, cook.W, cook.H).data;
+    let relaxedDiff = 0;
+    for (let i = 0; i < wimg2.length; i += 160) {
+      if (Math.abs(wimg2[i] - bimg[i]) > 0 || Math.abs(wimg2[i + 1] - bimg[i + 1]) > 0 || Math.abs(wimg2[i + 2] - bimg[i + 2]) > 0) relaxedDiff++;
+    }
+    if (stepStates.song !== 'tone.wav' || !wasActive || relaxedDiff > 0) R.ok = false;
+    return { image: cook.imageName, size: `${cook.W}x${cook.H}`, wasActive, diffSamples: diff, sampled, progress: +progress.toFixed(2), cookLevel: Math.round(cook.cookLevel), jpegPath: out, jpegBytes: bytes ? bytes.length : 0, isJpeg, stepStates, relaxedDiff };
   });
   await step('depth', async () => {
     // Models are pre-seeded in userData by the build harness; estimate from
@@ -4683,9 +5363,12 @@ async function smokeTest() {
       grid: grid ? grid.length : 0, masks: !!(cook.nearMask && cook.farMask), modelOk, heurOk, error: depth.error
     };
   });
-  await step('mission', async () => {
-    setTab('mission');
+  await step('play-mc', async () => {
+    // v0.2.6: Mission Control lives in the Play tab now — same assertions,
+    // viewed in Play (scrolled to the MC strip).
+    setTab('play');
     await playAt(0); // restart the tone so onsets flow onto the map
+    $('play-mc').scrollIntoView();
     await new Promise((r) => setTimeout(r, 2500));
     const blips = mc.blips.length;
     const xray = $('xray-detect').textContent;
@@ -4694,6 +5377,121 @@ async function smokeTest() {
     const mcCode = $('mc-code').textContent;
     setTab('play');
     return { blips, xray, tiles, hexRows, mapW: mcMap.width, mcCodeLen: mcCode.length, mcCodeLive: mcCode.includes('setcpm') || mcCode.includes('s(') };
+  });
+  await step('analysis-hires', async () => {
+    // v0.2.6: hi-res analysis — 32/64 bands, centroid/flux/RMS, chroma,
+    // beat phase, instrument heuristics, offline sections/loudness/chroma.
+    const res = {
+      bands32: analysis ? analysis.bands32.length : 0,
+      bands64: analysis ? analysis.bands64.length : 0,
+      centroid: analysis ? +analysis.centroid.toFixed(0) : 0,
+      flux: analysis ? +analysis.flux.toFixed(3) : 0,
+      rms: analysis ? +analysis.rms.toFixed(3) : 0,
+      beatPhase: analysis ? analysis.beatPhase : -1,
+      instruments: analysis ? Object.keys(analysis.instruments) : [],
+      offlineSections: (state.lastBeats && state.lastBeats.sections) ? state.lastBeats.sections.length : -1,
+      offlineLoudness: (state.lastBeats && state.lastBeats.loudness) ? state.lastBeats.loudness.length : -1,
+      offlineChroma: (state.lastBeats && state.lastBeats.chromaTimeline) ? state.lastBeats.chromaTimeline.length : -1,
+      bpm: analysis ? analysis.bpm : 0,
+    };
+    if (res.bands32 !== 32 || res.bands64 !== 64 || res.instruments.length !== 5
+      || res.offlineSections < 0 || res.offlineLoudness < 0 || res.offlineChroma < 0) R.ok = false;
+    return res;
+  });
+  await step('scenes-026', async () => {
+    // v0.2.6: 50 scenes total — the 37 new ones render without errors.
+    setTab('visualize');
+    await playAt(0);
+    await new Promise((r) => setTimeout(r, 1200));
+    const res = { sceneCount: Object.keys(SCENES).length, chips: document.querySelectorAll('#lookbar .look-chip').length, tried: {} };
+    const f0 = state.frameCount;
+    for (const id of ['lab-flow', 'gather-particles', 'synkit-chroma', 'geo-hex', 'grad-bands', 'starfield']) {
+      setLook(id);
+      await new Promise((r) => setTimeout(r, 400));
+      res.tried[id] = state.look === id;
+    }
+    res.framesAdvanced = state.frameCount - f0;
+    res.errors = window.__errors.length;
+    setLook('studio');
+    if (res.sceneCount !== 50 || res.chips !== 50 || res.framesAdvanced <= 0 || Object.values(res.tried).some((v) => !v)) R.ok = false;
+    return res;
+  });
+  await step('layout-persist', async () => {
+    // v0.2.6: drag order / hide / resize persist in pulse-config.json and
+    // survive a re-read; reset restores the built-in layout.
+    setTab('play');
+    const lib = $('library-pane');
+    lib.style.order = '2';
+    window.PulseLayout.hidePanel($('lyrics-pane'));
+    window.PulseLayout.persist();
+    await new Promise((r) => setTimeout(r, 300));
+    const cfg = await window.pulse.getConfig();
+    const saved = cfg && cfg.layout;
+    const res = {
+      savedOrder: saved && saved.panels && saved.panels['library-pane'] && saved.panels['library-pane'].order,
+      savedHidden: saved && saved.panels && saved.panels['lyrics-pane'] && saved.panels['lyrics-pane'].hidden,
+      hiddenNow: $('lyrics-pane').classList.contains('layout-hidden'),
+    };
+    window.PulseLayout.resetLayout();
+    res.afterResetHidden = $('lyrics-pane').classList.contains('layout-hidden');
+    res.afterResetOrder = $('library-pane').style.order;
+    if (res.savedOrder !== 2 || res.savedHidden !== true || !res.hiddenNow || res.afterResetHidden || res.afterResetOrder) R.ok = false;
+    return res;
+  });
+  await step('modules', async () => {
+    // v0.2.6: modules are clickable / right-clickable to edit.
+    setTab('play');
+    const res = { hasContextMenu: typeof showModuleMenu === 'function', hasEditor: typeof openModuleEditor === 'function' };
+    showModuleMenu(200, 200, $('play-spectrum'));
+    res.menuVisible = !$('module-menu').hidden;
+    res.menuHasEdit = $('module-menu').textContent.includes('Edit Spectrum');
+    $('module-menu').hidden = true;
+    openModuleEditor('spectrum');
+    res.dialogOpen = $('module-dialog').open;
+    res.paramRows = document.querySelectorAll('#module-dialog-body .param-row').length;
+    setModuleParam('spectrum', 'bands', '16');
+    res.bandsNow = moduleVals('spectrum').bands;
+    await new Promise((r) => setTimeout(r, 300));
+    const cfg = await window.pulse.getConfig();
+    res.persistedBands = cfg && cfg.modules && cfg.modules.spectrum && cfg.modules.spectrum.bands;
+    $('module-dialog').close();
+    setModuleParam('spectrum', 'bands', '64'); // restore default
+    if (!res.menuVisible || !res.menuHasEdit || !res.dialogOpen || res.paramRows < 4 || res.bandsNow !== '16' || res.persistedBands !== '16') R.ok = false;
+    return res;
+  });
+  await step('viz-fullscreen', async () => {
+    // v0.2.6: fullscreen visualization — stage fills the screen, panels
+    // stay on top; toggles off cleanly.
+    setTab('visualize');
+    toggleVizFullscreen();
+    await new Promise((r) => setTimeout(r, 300));
+    const res = {
+      on: document.body.classList.contains('viz-fullscreen') && $('tab-visualize').classList.contains('viz-fullscreen'),
+      tabbarHidden: getComputedStyle($('tabbar')).display === 'none',
+    };
+    toggleVizFullscreen();
+    await new Promise((r) => setTimeout(r, 300));
+    res.off = !document.body.classList.contains('viz-fullscreen') && !$('tab-visualize').classList.contains('viz-fullscreen');
+    if (!res.on || !res.tabbarHidden || !res.off) R.ok = false;
+    return res;
+  });
+  await step('code-hide', async () => {
+    // v0.2.6: the live-code Hide button collapses the WHOLE box now.
+    setTab('visualize');
+    const panel = $('code-panel');
+    panel.classList.remove('hidden-panel');
+    $('btn-code-toggle').click();
+    await new Promise((r) => setTimeout(r, 150));
+    const res = {
+      hiddenClass: panel.classList.contains('hidden-panel'),
+      display: getComputedStyle(panel).display,
+      btnText: $('btn-code-toggle').textContent,
+    };
+    $('btn-code-toggle').click();
+    await new Promise((r) => setTimeout(r, 150));
+    res.shownAgain = !panel.classList.contains('hidden-panel') && getComputedStyle(panel).display !== 'none';
+    if (!res.hiddenClass || res.display !== 'none' || !res.shownAgain) R.ok = false;
+    return res;
   });
   await step('popouts', async () => {
     await window.pulse.popoutClose('code');
@@ -4733,7 +5531,7 @@ async function smokeTest() {
     };
     try { await document.fonts.load('12px "Paper Mono"'); res.fontOk = document.fonts.check('12px "Paper Mono"'); } catch (_) { res.fontOk = false; }
     res.errors = window.__errors;
-    if (present.length || res.tabs !== 7 || !res.accent) R.ok = false;
+    if (present.length || res.tabs !== 6 || !res.accent) R.ok = false;
     return res;
   });
   await step('sysaudio', async () => {
