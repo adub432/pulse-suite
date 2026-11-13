@@ -646,6 +646,8 @@ body.viz-fullscreen #tabbar, body.viz-fullscreen #transport { display: none !imp
 .drag-grip { cursor: grab; color: var(--app-faint); font-weight: 800; letter-spacing: .1em; user-select: none; margin-right: 6px; }
 .drag-grip:active { cursor: grabbing; }
 [data-layout-panel].layout-dragging { outline: 2px dashed var(--accent-hot); outline-offset: -2px; opacity: .85; }
+/* v0.2.7: the container a dragged panel is hovering over lights up. */
+.layout-drop-zone { outline: 2px dashed var(--app-accent-2) !important; outline-offset: -2px; }
 .resize-grip { position: absolute; right: 0; bottom: 0; width: 16px; height: 16px; cursor: nwse-resize; z-index: 8; background: linear-gradient(135deg, transparent 50%, var(--app-accent-2) 50%); opacity: .7; }
 .resize-grip:hover { opacity: 1; }
 [data-layout-panel] { position: relative; }
@@ -657,6 +659,7 @@ body.viz-fullscreen #tabbar, body.viz-fullscreen #transport { display: none !imp
 /* Module context menu + editor (Mousiki settings model, with a mouse). */
 #module-menu { position: fixed; z-index: 100; min-width: 240px; }
 #module-menu .menu-head { font-size: 11px; font-weight: 700; letter-spacing: .14em; color: var(--app-accent); padding: 8px 10px 4px; }
+#module-dialog .dlg-body { max-height: 70vh; overflow-y: auto; } /* v0.2.7: the live map has 26 params — the editor scrolls instead of running off the screen */
 #module-dialog .param-row { display: flex; flex-direction: column; gap: 4px; margin: 10px 0; font-size: 12.5px; }
 #module-dialog .param-row label { font-size: 11px; font-weight: 700; letter-spacing: .1em; color: var(--app-dim); }
 #module-dialog .param-desc { font-size: 11.5px; color: var(--app-faint); line-height: 1.5; }

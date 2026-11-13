@@ -263,6 +263,16 @@
             </optgroup>
           </select>
         </label>
+        <label id="spectrum-scene-opt" hidden>SPECTRUM THEME
+          <select id="spectrum-scene-theme">
+            <option value="mousiki" selected>Mousiki — springy gradient bars</option>
+            <option value="ascii">ASCII — terminal characters, amber</option>
+            <option value="vu">VU Meter — slow amber-to-red</option>
+            <option value="neon">Neon — magenta to cyan</option>
+            <option value="matrix">Matrix — green ASCII</option>
+            <option value="mono">Mono Line — one grey line</option>
+          </select>
+        </label>
         <label id="mesh-scene-opt" hidden>MESH PALETTE
           <select id="mesh-scene-palette">
             <option value="aurora" selected>Aurora — teal / violet / pink</option>
@@ -271,6 +281,7 @@
             <option value="candy">Candy — hot pink / amber / sky</option>
             <option value="mono">Mono — greys</option>
           </select>
+          REACTIVITY <input type="range" id="mesh-scene-react" min="0" max="2" step="0.1" value="1" title="How hard the music drives the blobs — 0 is pure drift, 2 is violent">
         </label>
         <span id="look-desc" class="look-desc"></span>
         <button class="paper-btn" id="btn-randomize-look" title="Randomize this look's preset">🎲 Randomize</button>
@@ -349,7 +360,7 @@
           <span id="glitch-format" class="fmt"></span>
         </div>
         <div id="glitch-format-note" class="fmt-note"></div>
-        <label class="check-row"><input type="checkbox" class="paper-switch" id="glitch-audio-corrupt"> AUDIO CORRUPT — corrupt a few bytes on every kick while audio plays (watch it live in Mission Control)</label>
+        <label class="check-row"><input type="checkbox" class="paper-switch" id="glitch-audio-corrupt" checked> AUDIO CORRUPT — corrupt a few bytes on every kick while audio plays (auto-starts when music starts; uncheck to stop it — watch it live in Mission Control)</label>
         <div id="hex-view" tabindex="0" title="Click a byte to start a selection, click again (or drag) to end it"></div>
         <div class="hex-nav">
           <button class="paper-btn paper-btn-text" id="hex-prev">◀ Prev 4 KB</button>

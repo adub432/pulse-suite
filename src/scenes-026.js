@@ -5,6 +5,24 @@
    is plain Canvas 2D, theme-coloured, defensive on silent/zero input, and
    visibly music-reactive. Per-scene state lives only on the draw function
    object (fn._s). Wired in by the parent agent; no app.js internals here. */
+/* v0.2.7 item 7 (audit follow-up): two colour helpers the scenes share.
+   fadeHex(hex, alpha) turns a theme hex into an rgba() string — the
+   mesh-aurora blobs used to build radial gradients with the SAME colour
+   on both stops, so they drew as hard discs with no aurora falloff.
+   mixHex(c1, c2, f) blends two theme hexes, so the plasma palette can
+   rotate continuously with the centroid instead of in 3 coarse buckets. */
+function fadeHex026(hex, alpha) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex || '');
+  if (!m) return `rgba(255,255,255,${alpha})`;
+  const v = parseInt(m[1], 16);
+  return `rgba(${(v >> 16) & 255},${(v >> 8) & 255},${v & 255},${alpha})`;
+}
+function mixHex026(c1, c2, f) {
+  const a = fadeHex026(c1, 1).match(/\d+/g).map(Number);
+  const b = fadeHex026(c2, 1).match(/\d+/g).map(Number);
+  const r = Math.round(a[0] + (b[0] - a[0]) * f), g = Math.round(a[1] + (b[1] - a[1]) * f), bl = Math.round(a[2] + (b[2] - a[2]) * f);
+  return `rgb(${r},${g},${bl})`;
+}
 window.PULSE_SCENES_026 = {
   list: [
     { id: 'gather-particles', label: 'Gather Particles', family: 'SITES', desc: 'Drifting particle field that bursts outward on every kick' },
@@ -123,7 +141,7 @@ window.PULSE_SCENES_026 = {
         for (var i = 0; i < cols; i++) s.drops.push({ y: Math.random() * h, sp: 0.6 + Math.random() * 1.4 });
       }
       if (k > 0.7) s.flash = 1;
-      s.flash = Math.max(0, s.flash - 0.03);
+      s.flash = Math.max(0, s.flash - 0.02); // v0.2.7 item 7: was 0.03 — the kick flash died too fast to read
       g.font = '13px "Paper Mono", ui-monospace, monospace';
       g.textAlign = 'left'; g.textBaseline = 'top';
       var flashY = y + ((t * 0.35) % 1) * h;
@@ -132,7 +150,7 @@ window.PULSE_SCENES_026 = {
         d.y += d.sp * (1 + lv * 4) * 1.6;
         if (d.y > h + 20) { d.y = -20 - Math.random() * 60; d.sp = 0.6 + Math.random() * 1.4; }
         var ci = Math.min(ramp.length - 1, Math.floor((0.3 + lv * 0.7 + Math.sin(t * 2 + c) * 0.15) * ramp.length));
-        var nearFlash = Math.abs((y + d.y) - flashY) < 26;
+        var nearFlash = Math.abs((y + d.y) - flashY) < 48; // v0.2.7 item 7: was 26 — the bright wave was a sliver
         g.globalAlpha = nearFlash ? 1 : 0.45 + lv * 0.4;
         g.fillStyle = (nearFlash && s.flash > 0.3) ? accent : dim;
         g.fillText(ramp.charAt(Math.max(0, ci)), x + c * 14, y + d.y);
@@ -272,37 +290,58 @@ window.PULSE_SCENES_026 = {
       }
       g.globalAlpha = 1;
     },
-    /* 8. mesh-aurora — mmeshy.com slow aurora blobs. */
+    /* 8. mesh-aurora — mmeshy.com slow aurora blobs.
+       v0.2.7 item 7: was time-only drift with a small bass swell. Now the
+       radius swells hard on bass + kick, each kick shoves the blobs
+       outward, the drift speed follows the level, and the colours cycle
+       with the spectral centroid. */
     'mesh-aurora': function meshAurora(g, x, y, w, h, A) {
       if (!g || w <= 0 || h <= 0) return;
       A = A || {};
       var bass = Math.min(1, Math.max(0, A.bass || 0));
+      var kick = Math.min(1, Math.max(0, A.kick || 0));
       var lv = Math.min(1, Math.max(0, A.level || 0));
       var t = A.t || 0;
+      var cent = A.centroid || 0;
       var th = A.theme || {};
       var accent = th.accent || '#ffffff';
       var bar = Array.isArray(th.bar) ? th.bar : [accent, accent, accent];
+      var pick = Math.min(2, Math.max(0, Math.floor(cent / 2500)));
+      var speed = 1 + lv * 1.4;
       var cx = x + w / 2, cy = y + h / 2;
       for (var i = 0; i < 4; i++) {
         var ph = i * 1.9;
-        var bx = cx + Math.sin(t * 0.07 + ph) * w * 0.3;
-        var by = cy + Math.cos(t * 0.05 + ph * 1.4) * h * 0.26;
-        var r = Math.min(w, h) * (0.3 + i * 0.06) * (1 + bass * 0.6);
+        var bx = cx + Math.sin(t * 0.07 * speed + ph) * w * 0.3;
+        var by = cy + Math.cos(t * 0.05 * speed + ph * 1.4) * h * 0.26;
+        // Kick shove: the blob jumps away from the centre on the beat.
+        var dx = bx - cx, dy = by - cy, d = Math.hypot(dx, dy) || 1;
+        var shove = kick * 0.06 * Math.min(w, h);
+        bx += (dx / d) * shove; by += (dy / d) * shove;
+        var r = Math.min(w, h) * (0.3 + i * 0.06) * (1 + bass * 1.2 + kick * 0.5);
+        var col = bar[(pick + i) % 3];
         var grad = g.createRadialGradient(bx, by, 0, bx, by, Math.max(1, r));
-        grad.addColorStop(0, bar[i % 3]);
-        grad.addColorStop(1, bar[i % 3]);
-        g.globalAlpha = 0.16 + lv * 0.22;
+        // Audit follow-up: both stops used to be the same colour, so the
+        // blobs drew as hard discs with no aurora falloff. The outer stop
+        // is transparent now, so each blob is a soft glow.
+        grad.addColorStop(0, col);
+        grad.addColorStop(1, fadeHex026(col, 0));
+        g.globalAlpha = 0.12 + lv * 0.38;
         g.fillStyle = grad;
         g.beginPath(); g.arc(bx, by, Math.max(1, r), 0, Math.PI * 2); g.fill();
       }
       g.globalAlpha = 1;
     },
-    /* 9. mesh-waves — mmeshy.com mesh-gradient waves. */
+    /* 9. mesh-waves — mmeshy.com mesh-gradient waves.
+       v0.2.7 item 7: was already the most reactive mesh scene (band
+       energies drive the wave height, centroid picks the colours). The
+       bass swell and the wave speed now follow the music harder, and
+       each kick crests the waves. */
     'mesh-waves': function meshWaves(g, x, y, w, h, A) {
       if (!g || w <= 0 || h <= 0) return;
       A = A || {};
       var lv = Math.min(1, Math.max(0, A.level || 0));
       var bass = Math.min(1, Math.max(0, A.bass || 0));
+      var kick = Math.min(1, Math.max(0, A.kick || 0));
       var t = A.t || 0;
       var cent = A.centroid || 0;
       var th = A.theme || {};
@@ -313,13 +352,13 @@ window.PULSE_SCENES_026 = {
       for (var band = 0; band < 4; band++) {
         var e = b32 ? b32[Math.min(31, band * 8 + 3)] : lv;
         var baseY = y + h * (0.2 + band * 0.2);
-        var amp = (8 + e * 46 + bass * 20);
+        var amp = (8 + e * 46 + bass * 36 + kick * 26);
         g.globalAlpha = 0.3 + e * 0.45;
         g.fillStyle = bar[(pick + band) % 3];
         g.beginPath();
         g.moveTo(x, y + h);
         for (var px = 0; px <= w; px += 12) {
-          var py = baseY + Math.sin(px * 0.012 + t * (0.6 + band * 0.2) + band * 2) * amp;
+          var py = baseY + Math.sin(px * 0.012 + t * (0.6 + band * 0.2 + lv * 0.8) + band * 2) * amp;
           g.lineTo(x + px, py);
         }
         g.lineTo(x + w, y + h);
@@ -343,7 +382,7 @@ window.PULSE_SCENES_026 = {
         for (var i = 0; i < 220; i++) s.pts.push({ px: Math.random() * w, py: Math.random() * h, c: i % 3 });
       }
       var speed = 0.6 + flux * 4 + lv * 1.5;
-      g.lineWidth = 1;
+      g.lineWidth = 1 + lv * 1.5; // loud lines draw thicker, not just longer
       for (var j = 0; j < s.pts.length; j++) {
         var p = s.pts[j];
         var ang = Math.sin(p.px * 0.008 + t * 0.4) * 2.2 + Math.cos(p.py * 0.009 - t * 0.3) * 2.2;
@@ -402,7 +441,7 @@ window.PULSE_SCENES_026 = {
       s.prevK = k;
       var cx = x + w / 2, cy = y + h / 2;
       var maxR = Math.min(w, h) * 0.7;
-      g.lineWidth = 2;
+      g.lineWidth = 2 + k * 2; // the rings hit harder on a kick
       for (var i = s.rings.length - 1; i >= 0; i--) {
         var rg = s.rings[i];
         rg.age += dt * (0.5 + bass * 0.8);
@@ -487,11 +526,18 @@ window.PULSE_SCENES_026 = {
       A = A || {};
       var bass = Math.min(1, Math.max(0, A.bass || 0));
       var lv = Math.min(1, Math.max(0, A.level || 0));
+      var flux = Math.min(1, Math.max(0, A.flux || 0));
+      var bp = (A.beatPhase == null || A.beatPhase < 0) ? -1 : A.beatPhase;
       var t = A.t || 0;
       var th = A.theme || {};
       var accent = th.accent || '#ffffff';
       var grid = th.grid || accent;
-      var off = bass * 26 * Math.sin(t * 0.9) + lv * 8;
+      // Audit follow-up: the grids used to slide on sin(t) whatever the
+      // music did — audio only scaled the slide. The phase now advances
+      // on the BEAT (beatPhase when locked, time fallback when not), and
+      // the offset itself is bass + flux, not a time sine.
+      var phase = bp >= 0 ? bp * Math.PI * 2 : t * 0.9;
+      var off = (bass * 40 + flux * 20) * Math.sin(phase) + lv * 8;
       var gap = 18;
       g.lineWidth = 1;
       g.globalAlpha = 0.55;
@@ -521,23 +567,35 @@ window.PULSE_SCENES_026 = {
       A = A || {};
       var lv = Math.min(1, Math.max(0, A.level || 0));
       var bass = Math.min(1, Math.max(0, A.bass || 0));
+      var kick = Math.min(1, Math.max(0, A.kick || 0));
       var t = A.t || 0;
       var th = A.theme || {};
       var accent = th.accent || '#ffffff';
       var bar = Array.isArray(th.bar) ? th.bar : [accent, accent, accent];
-      var cyc = Math.floor(t / 6) % 3;
-      var grad = g.createLinearGradient(x, y, x + w, y + h);
+      // Audit follow-up: the palette used to cycle on a 6-second clock
+      // and the light band drifted on one too — the wash read as a
+      // screensaver. The palette now steps on each KICK (rising edge),
+      // the band's drift speed follows the level, and the gradient
+      // angle leans with the level.
+      var s = gradAurora._s || (gradAurora._s = { cyc: 0, prevK: 0 });
+      if (kick > 0.65 && s.prevK <= 0.65) s.cyc = (s.cyc + 1) % 3;
+      s.prevK = kick;
+      var cyc = s.cyc;
+      var ang = (0.25 + lv * 0.5) * Math.PI; // 45° quiet → 135° loud
+      var gx0 = x + w / 2 - Math.cos(ang) * w / 2, gy0 = y + h / 2 - Math.sin(ang) * h / 2;
+      var gx1 = x + w / 2 + Math.cos(ang) * w / 2, gy1 = y + h / 2 + Math.sin(ang) * h / 2;
+      var grad = g.createLinearGradient(gx0, gy0, gx1, gy1);
       grad.addColorStop(0, bar[cyc % 3]);
       grad.addColorStop(0.55, bar[(cyc + 1) % 3]);
       grad.addColorStop(1, bar[(cyc + 2) % 3]);
       g.globalAlpha = 0.22 + lv * 0.45 + bass * 0.12;
       g.fillStyle = grad;
       g.fillRect(x, y, w, h);
-      // Slow drifting light band across the wash.
-      var bandY = y + ((Math.sin(t * 0.12) * 0.5 + 0.5) * h);
+      // Slow drifting light band across the wash — speed follows level.
+      var bandY = y + ((Math.sin(t * 0.12 * (0.5 + lv)) * 0.5 + 0.5) * h);
       var glow = g.createRadialGradient(x + w / 2, bandY, 0, x + w / 2, bandY, Math.max(1, h * 0.4));
-      glow.addColorStop(0, accent);
-      glow.addColorStop(1, accent);
+      glow.addColorStop(0, fadeHex026(accent, 0.9));
+      glow.addColorStop(1, fadeHex026(accent, 0));
       g.globalAlpha = 0.1 + lv * 0.2;
       g.fillStyle = glow;
       g.fillRect(x, y, w, h);
@@ -627,6 +685,10 @@ window.PULSE_SCENES_026 = {
           var d = Math.sqrt(dx * dx + dy * dy) || 1;
           p.ox = dx / d * (30 + Math.random() * 70) * (0.5 + k);
           p.oy = dy / d * (30 + Math.random() * 70) * (0.5 + k);
+          // v0.2.7 item 7: the scatter used to ease in 12% per frame, so
+          // a single loud frame barely moved — jump halfway at once so
+          // the kick reads instantly, then ease the rest.
+          p.px += p.ox * 0.5; p.py += p.oy * 0.5;
         }
       }
       s.prevK = k;
@@ -655,10 +717,16 @@ window.PULSE_SCENES_026 = {
       var bar = Array.isArray(th.bar) ? th.bar : [accent, accent, accent];
       var b32 = (A.bands32 && A.bands32.length >= 32) ? A.bands32 : null;
       var slices = 12, sh = h / slices;
+      // Audit follow-up (polish): the offset used to snap to 0 between
+      // kicks. The kick level is now held and decayed, so slices ease
+      // back instead of snapping.
+      var s = synkitSlices._s || (synkitSlices._s = { k: 0 });
+      s.k = Math.max(k, s.k * 0.94);
+      var kk = s.k;
       for (var i = 0; i < slices; i++) {
         var dir = (i % 2 === 0) ? 1 : -1;
         var seed = Math.sin(i * 91.7 + Math.floor(t * 2) * 0.13);
-        var off = dir * seed * k * w * 0.16;
+        var off = dir * seed * kk * w * 0.16;
         var e = b32 ? b32[Math.min(31, Math.floor(i / slices * 32))] : 0.3;
         var bw = Math.max(3, (0.25 + e * 0.75) * sh);
         g.globalAlpha = 0.5 + e * 0.5;
@@ -681,7 +749,7 @@ window.PULSE_SCENES_026 = {
       var accent = th.accent || '#ffffff';
       var bar = Array.isArray(th.bar) ? th.bar : [accent, accent, accent];
       var b32 = (A.bands32 && A.bands32.length >= 32) ? A.bands32 : null;
-      var sep = 2 + bass * 16;
+      var sep = 2 + bass * 26; // v0.2.7 item 7: was 16 — the split was too shy to read
       var cols = [bar[2], bar[0], accent];
       var offs = [-sep, 0, sep];
       for (var c = 0; c < 3; c++) {
@@ -801,11 +869,16 @@ window.PULSE_SCENES_026 = {
         var px = cx + st.sx / st.z * w * 0.45;
         var py = cy + st.sy / st.z * h * 0.45;
         if (px < x || px > x + w || py < y || py > y + h) continue;
-        var flare = (1 - st.z) * (1 + bass * 2.2);
-        g.globalAlpha = 0.3 + (1 - st.z) * 0.7;
+        // v0.2.7 item 7: the flare used to multiply (1-z) only, so far
+        // stars never flared at all — a loud frame barely differed from
+        // a quiet one (the audit test measured 1.88× noise, under the
+        // 2× bar). Every star now gets a bass floor, so the whole field
+        // lights up on the beat, and the alpha punches with the bass too.
+        var flare = (1 - st.z) * (1 + bass * 2.2) + bass * 0.35;
+        g.globalAlpha = Math.min(1, 0.3 + (1 - st.z) * 0.7 + bass * 0.25);
         g.fillStyle = bar[st.c];
         g.beginPath();
-        g.arc(px, py, 0.6 + flare * 1.8, 0, Math.PI * 2);
+        g.arc(px, py, 0.6 + flare * 2.6, 0, Math.PI * 2);
         g.fill();
       }
       g.globalAlpha = 1;
@@ -823,14 +896,21 @@ window.PULSE_SCENES_026 = {
       var bar = Array.isArray(th.bar) ? th.bar : [accent, accent, accent];
       var cx = x + w / 2 + Math.sin(t * 0.4) * w * 0.03 * (1 + bass);
       var cy = y + h / 2 + Math.cos(t * 0.33) * h * 0.03 * (1 + bass);
-      var maxR = Math.min(w, h) * 0.62;
+      var maxR = Math.min(w, h) * 0.62 * (1 + (A.kick || 0) * 0.25);
       var speed = bpm > 0 ? bpm / 120 : 0.5;
       var rings = 14;
+      // v0.2.7 item 7: the speed followed the BPM, but speed only shows
+      // over seconds of flight — a single loud frame looked the same as
+      // a quiet one. The rings now also GLOW with the level instantly,
+      // so the tunnel reads the music in any single frame. Audit
+      // follow-up: the flight rate itself now follows level + bass
+      // (0.3 quiet → ~1.7 loud) instead of near-constant BPM scroll.
+      var glow = 0.55 + lv * 0.45;
       g.lineWidth = 1.5;
       for (var i = 0; i < rings; i++) {
-        var depth = (((i / rings) + t * 0.22 * speed * (0.6 + lv)) % 1);
+        var depth = (((i / rings) + t * 0.22 * speed * (0.3 + lv * 1.4 + bass * 0.3)) % 1);
         var rr = Math.max(1, depth * depth * maxR);
-        g.globalAlpha = 0.12 + depth * 0.75;
+        g.globalAlpha = (0.12 + depth * 0.75) * glow;
         g.strokeStyle = bar[i % 3];
         g.beginPath();
         g.arc(cx, cy, rr, 0, Math.PI * 2);
@@ -838,7 +918,7 @@ window.PULSE_SCENES_026 = {
         // Spokes on the ring, denser near the viewer.
         if (depth > 0.45) {
           var spokes = 8;
-          g.globalAlpha = (depth - 0.45) * 0.9;
+          g.globalAlpha = (depth - 0.45) * 0.9 * glow;
           g.strokeStyle = accent;
           for (var sp = 0; sp < spokes; sp++) {
             var a = sp / spokes * Math.PI * 2 + t * 0.15;
@@ -857,20 +937,29 @@ window.PULSE_SCENES_026 = {
       A = A || {};
       var lv = Math.min(1, Math.max(0, A.level || 0));
       var k = Math.min(1, Math.max(0, A.kick || 0));
+      var bass = Math.min(1, Math.max(0, A.bass || 0));
       var cent = A.centroid || 0;
       var t = A.t || 0;
       var th = A.theme || {};
       var accent = th.accent || '#ffffff';
       var bar = Array.isArray(th.bar) ? th.bar : [accent, accent, accent];
-      var shift = Math.min(2, Math.max(0, Math.floor(cent / 3000)));
+      // Audit follow-up: the plasma churned on time sines — audio only
+      // tweaked its speed and picked one of 3 palette buckets. Now the
+      // field's AMPLITUDE follows the level (quiet = flat, loud = wild),
+      // the phase speed follows the bass, and the palette rotates
+      // CONTINUOUSLY with the centroid (blended between neighbours).
+      var amp = 0.4 + lv;
+      var phaseSpeed = 0.5 + bass;
+      var hue = (cent / 9000) * 3; // 0..3 across the audible centroid range
+      var hueInt = Math.floor(hue) % 3, hueFrac = hue - Math.floor(hue);
       var step = 24;
       for (var py = 0; py < h; py += step) {
         for (var px = 0; px < w; px += step) {
-          var v = Math.sin(px * 0.012 + t * (0.8 + lv)) + Math.sin(py * 0.014 - t * 0.6)
-            + Math.sin((px + py) * 0.008 + t * 0.4 + k * 2) + Math.sin(Math.sqrt(px * px + py * py) * 0.02 - t);
-          var bucket = Math.abs(Math.floor((v + 4) / 2.7)) % 3;
+          var v = (Math.sin(px * 0.012 + t * (0.8 + lv) * phaseSpeed) + Math.sin(py * 0.014 - t * 0.6)
+            + Math.sin((px + py) * 0.008 + t * 0.4 + k * 2) + Math.sin(Math.sqrt(px * px + py * py) * 0.02 - t)) * amp;
+          var bucket = Math.abs(Math.floor((v + 4 * amp) / (2.7 * amp))) % 3;
           g.globalAlpha = 0.5 + lv * 0.4;
-          g.fillStyle = bar[(bucket + shift) % 3];
+          g.fillStyle = mixHex026(bar[(bucket + hueInt) % 3], bar[(bucket + hueInt + 1) % 3], hueFrac);
           g.fillRect(x + px, y + py, step - 1, step - 1);
         }
       }
@@ -1026,14 +1115,20 @@ window.PULSE_SCENES_026 = {
       var th = A.theme || {};
       var accent = th.accent || '#ffffff';
       var grid = th.grid || accent;
+      var b32 = (A.bands32 && A.bands32.length >= 32) ? A.bands32 : null;
       var horizon = y + h * 0.42;
       var cx = x + w / 2;
       var speed = bpm > 0 ? bpm / 120 : 0.6;
-      var phase = (t * 0.5 * speed * (0.5 + lv)) % 1;
+      // Audit follow-up: the floor used to rush at near-constant speed
+      // with audio only scaling it. The rush speed now follows the level
+      // hard (0.3 quiet → 1.8 loud), the horizon glows on the kick, and
+      // the verticals take their alpha from the bands.
+      var phase = (t * 0.5 * speed * (0.3 + lv * 1.5)) % 1;
       g.lineWidth = 1;
-      // Converging verticals.
+      // Converging verticals — alpha from the band under each line.
       for (var i = -8; i <= 8; i++) {
-        g.globalAlpha = 0.25 + k * 0.45;
+        var e = b32 ? b32[Math.min(31, Math.abs(i) * 2)] : 0.3;
+        g.globalAlpha = 0.15 + e * 0.5 + k * 0.3;
         g.strokeStyle = i === 0 ? accent : grid;
         g.beginPath();
         g.moveTo(cx + i * w * 0.03, horizon);
@@ -1053,12 +1148,16 @@ window.PULSE_SCENES_026 = {
         g.stroke();
       }
       g.lineWidth = 1;
-      g.globalAlpha = 0.7 + k * 0.3;
+      // Horizon line + glow — the horizon flares on the kick.
+      g.globalAlpha = 0.35 + k * 0.65;
       g.strokeStyle = accent;
       g.beginPath();
       g.moveTo(x, horizon);
       g.lineTo(x + w, horizon);
       g.stroke();
+      g.globalAlpha = 0.08 + lv * 0.15 + k * 0.3;
+      g.fillStyle = accent;
+      g.fillRect(x, horizon - 6, w, 12);
       g.globalAlpha = 1;
     },
     /* 32. helix — saved reels: double helix. */
@@ -1083,9 +1182,9 @@ window.PULSE_SCENES_026 = {
         var y2 = midY + Math.sin(ph + Math.PI) * rad;
         g.globalAlpha = 0.5 + lv * 0.5;
         g.fillStyle = bar[0];
-        g.beginPath(); g.arc(px, y1, 2.5 + bass * 2, 0, Math.PI * 2); g.fill();
+        g.beginPath(); g.arc(px, y1, 2.5 + bass * 3.5, 0, Math.PI * 2); g.fill();
         g.fillStyle = bar[2];
-        g.beginPath(); g.arc(px, y2, 2.5 + bass * 2, 0, Math.PI * 2); g.fill();
+        g.beginPath(); g.arc(px, y2, 2.5 + bass * 3.5, 0, Math.PI * 2); g.fill();
         if (i % 6 === 0) {
           g.globalAlpha = 0.3;
           g.strokeStyle = accent;
@@ -1116,7 +1215,10 @@ window.PULSE_SCENES_026 = {
       s.prevK = k; s.prevFlux = flux;
       var cx = x + w / 2, cy = y + h / 2;
       var R = Math.min(w, h) * 0.46;
-      var sweep = t * (bpm > 0 ? bpm / 60 * Math.PI : 0.9);
+      // Audit follow-up (polish): the sweep used to rotate at a constant
+      // BPM/clock rate — now it breathes with the level too.
+      var lv = Math.min(1, Math.max(0, A.level || 0));
+      var sweep = t * (bpm > 0 ? bpm / 60 * Math.PI : 0.9) * (0.5 + lv);
       g.lineWidth = 1;
       for (var ring = 1; ring <= 3; ring++) {
         g.globalAlpha = 0.35;
@@ -1244,8 +1346,8 @@ window.PULSE_SCENES_026 = {
       var orbits = 4;
       for (var o = 0; o < orbits; o++) {
         var e = b32 ? b32[Math.min(31, o * 8 + 2)] : 0.3;
-        var rx = w * (0.14 + o * 0.08) * (1 + bass * 0.25 + e * 0.2);
-        var ry = h * (0.1 + o * 0.06) * (1 + bass * 0.25 + e * 0.2);
+        var rx = w * (0.14 + o * 0.08) * (1 + bass * 0.6 + e * 0.2); // v0.2.7 item 7: bass 0.25 → 0.6, the swell was too shy
+        var ry = h * (0.1 + o * 0.06) * (1 + bass * 0.6 + e * 0.2);
         g.save();
         g.translate(cx, cy);
         g.rotate(tilt * (o % 2 ? -1 : 1));

@@ -105,8 +105,18 @@ const state = {
   sysAudio: false, sysStream: null, sysSource: null, sysStartedAt: 0,
   lyrics: [], lyricsActive: -1,
   geoShape: 'triangles', geoDensity: 1, ditherField: 'smoke',
-  asciiSceneStyle: 'halftone', meshScenePalette: 'aurora',
-  presenting: false, frameCount: 0,
+  asciiSceneStyle: 'halftone', meshScenePalette: 'aurora', meshSceneReact: 1,
+  // v0.2.7 item 2: Studio is no longer a fixed four — the user picks
+  // which visualizers show and how many, by right-clicking a quadrant.
+  // Persisted in pulse-config.json as cfg.studioSlots.
+  studioSlots: ['scope', 'spectrum', 'roll', 'orbit'],
+  studioRects: [], // last drawn slot rects, canvas coords (hit-testing)
+  presenting: false, frameCount: 0, frameDt: 1 / 60,
+  // v0.2.7 item 5: the Visualize spectrum/scope theme — its own bundle,
+  // separate from the Play spectrum/waveform themes (persisted as
+  // cfg.vizThemes.sceneViz). Default is the Mousiki preset (literal here
+  // because the SPECTRUM_THEMES registry is declared further down).
+  sceneVizTheme: { name: 'mousiki', style: 'blocks', colorMode: 'gradient', colorLeft: '#7dd3fc', colorRight: '#f472b6', fluidity: 10, degradation: 10, viscosity: 1 },
   customCode: '' // user Strudel lines from the (popped-out) code editor
 };
 
@@ -267,7 +277,12 @@ const engine = createAudioEngine(state, {
   resetAnalysis,
   updateSysAudioUI,
   onContextReady: () => { analysis = createAnalysis(state.audioCtx.sampleRate); },
-  onPlayState: (playing) => { $('btn-play').innerHTML = playing ? SVG_PAUSE : SVG_PLAY; },
+  onPlayState: (playing) => {
+    $('btn-play').innerHTML = playing ? SVG_PAUSE : SVG_PLAY;
+    // v0.2.7 item 3: the glitch starts by itself when music starts —
+    // no more sitting idle until the user finds the Glitch tab.
+    if (playing) maybeAutoGlitch();
+  },
   // v0.2.5: the engine never fails silently any more — blocked audio and
   // failed loads both say so in the player status line.
   onAudioBlocked: (message) => { $('play-status-text').textContent = '⚠ ' + message; },
@@ -300,6 +315,9 @@ const engine = createAudioEngine(state, {
     $('empty').classList.add('hidden');
     $('play-status-text').textContent = `${state.playing ? '▶' : '❚❚'} ${name} — ${fmt(state.duration)}${state.bpm ? ` · ~${state.bpm} BPM` : ''}`;
     loadLyricsFor(path);
+    // v0.2.7 item 3: get the glitch working copy ready at load time so
+    // the first kick after pressing play already corrupts bytes.
+    maybeAutoGlitchLoad();
     if (kind === 'audio') {
       const midiPath = await window.pulse.findSiblingMidi(path).catch(() => null);
       if (midiPath) await loadMidiFile(midiPath.path, midiPath.name, true);
@@ -733,6 +751,7 @@ const LAYER_TYPES = {
       { key: 'palette', type: 'select', label: 'Palette', def: 'aurora', options: Object.entries(MESH_PALETTES).map(([v, p]) => [v, p.label]), desc: 'The colour set the blobs blend from.' },
       { key: 'swirl', label: 'Swirl', min: 0, max: 1, step: 0.05, def: 0.5, desc: 'How far the colour nodes wander — 0 is still, 1 drifts everywhere.' },
       { key: 'scale', label: 'Scale', min: 0.4, max: 2, step: 0.05, def: 1, desc: 'How big each colour blob is — bigger blobs blend softer.' },
+      { key: 'react', label: 'Reactivity', min: 0, max: 2, step: 0.1, def: 1, desc: 'How hard the music drives the blobs — 0 is pure drift, 1 is the default swell + shove, 2 is violent.' },
     ],
     draw(g, w, h, p, t, a) { drawMeshGradient(g, w, h, p, t, a); },
   },
@@ -743,9 +762,13 @@ const LAYER_TYPES = {
       { key: 'gap', label: 'Gap', min: 2, max: 10, step: 1, def: 3, desc: 'Pixels between lines — smaller gaps read as a tighter CRT.' },
       { key: 'alpha', label: 'Strength', min: 0.05, max: 0.8, step: 0.05, def: 0.35, desc: 'How dark the lines are.' },
     ],
-    draw(g, w, h, p) {
-      g.fillStyle = `rgba(0,0,0,${p.alpha})`;
-      for (let y = 0; y < h; y += p.gap) g.fillRect(0, y, w, 1);
+    draw(g, w, h, p, t, a) {
+      // Audit follow-up: scanlines were static — the same lines at the
+      // same darkness whatever played. The gap now breathes with the
+      // bass and the darkness follows the level.
+      const gap = Math.max(2, p.gap * (1 - a.bass * 0.3));
+      g.fillStyle = `rgba(0,0,0,${Math.min(0.8, p.alpha * (0.7 + a.level * 0.6))})`;
+      for (let y = 0; y < h; y += gap) g.fillRect(0, y, w, 1);
     },
   },
   crtvhs: {
@@ -757,11 +780,15 @@ const LAYER_TYPES = {
     draw(g, w, h, p, t, a) {
       g.fillStyle = `rgba(0,0,0,${0.12 * p.amount})`;
       for (let n = 0; n < 3; n++) g.fillRect(0, Math.floor(Math.random() * h), w, 1);
-      const by = ((t * 40 * p.amount) % (h + 80)) - 40;
+      // Audit follow-up: the tracking band rolled at a constant speed
+      // and the jitter only fired on 30% of kicks. The band speed now
+      // follows the level, its brightness follows the kick, and every
+      // kick over 0.5 jitters the frame.
+      const by = ((t * (20 + a.level * 60) * p.amount) % (h + 80)) - 40;
       const grad = g.createLinearGradient(0, by - 14, 0, by + 14);
-      grad.addColorStop(0, 'rgba(255,255,255,0)'); grad.addColorStop(0.5, `rgba(255,255,255,${0.07 * p.amount})`); grad.addColorStop(1, 'rgba(255,255,255,0)');
+      grad.addColorStop(0, 'rgba(255,255,255,0)'); grad.addColorStop(0.5, `rgba(255,255,255,${0.07 * p.amount * (0.5 + a.kick)})`); grad.addColorStop(1, 'rgba(255,255,255,0)');
       g.fillStyle = grad; g.fillRect(0, by - 14, w, 28);
-      if (a.kick > 0.7 && Math.random() < 0.3) {
+      if (a.kick > 0.5) {
         const dy = (Math.random() - 0.5) * 6 * p.amount;
         g.drawImage(canvas, 0, dy);
       }
@@ -773,8 +800,10 @@ const LAYER_TYPES = {
     params: [
       { key: 'amount', label: 'Amount', min: 0, max: 1, step: 0.05, def: 0.4, desc: 'How heavy the grain is.' },
     ],
-    draw(g, w, h, p) {
-      const n = Math.floor(120 * p.amount);
+    draw(g, w, h, p, t, a) {
+      // Audit follow-up: the speckle count was fixed — grain is now
+      // denser on loud passages and kicks.
+      const n = Math.floor(120 * p.amount * (0.3 + a.level * 1.5 + a.kick));
       g.fillStyle = '#fff';
       for (let i = 0; i < n; i++) {
         g.globalAlpha = Math.random() * 0.25 * p.amount;
@@ -789,10 +818,12 @@ const LAYER_TYPES = {
     params: [
       { key: 'amount', label: 'Amount', min: 0, max: 1, step: 0.05, def: 0.5, desc: 'How much the brights bloom.' },
     ],
-    draw(g, w, h, p) {
+    draw(g, w, h, p, t, a) {
+      // Audit follow-up: the bloom was a fixed blur + alpha. It now
+      // blooms harder and wider on loud passages.
       g.save();
-      g.filter = 'blur(10px)';
-      g.globalAlpha = 0.45 * p.amount;
+      g.filter = `blur(${Math.round(6 + a.level * 10)}px)`;
+      g.globalAlpha = 0.45 * p.amount * (0.4 + a.level);
       g.globalCompositeOperation = 'screen';
       g.drawImage(canvas, -8, -8, w + 16, h + 16);
       g.restore();
@@ -804,10 +835,12 @@ const LAYER_TYPES = {
     params: [
       { key: 'amount', label: 'Amount', min: 0, max: 1, step: 0.05, def: 0.6, desc: 'How dark the corners get.' },
     ],
-    draw(g, w, h, p) {
+    draw(g, w, h, p, t, a) {
       const r = Math.hypot(w, h) / 2;
       const grad = g.createRadialGradient(w / 2, h / 2, r * 0.4, w / 2, h / 2, r);
-      grad.addColorStop(0, 'rgba(0,0,0,0)'); grad.addColorStop(1, `rgba(0,0,0,${0.7 * p.amount})`);
+      // Audit follow-up: the corners were a fixed darkness. The frame
+      // now closes in on loud passages.
+      grad.addColorStop(0, 'rgba(0,0,0,0)'); grad.addColorStop(1, `rgba(0,0,0,${0.7 * p.amount * (0.6 + a.level * 0.6)})`);
       g.fillStyle = grad; g.fillRect(0, 0, w, h);
     },
   },
@@ -844,7 +877,7 @@ const LAYER_TYPES = {
       { key: 'size', label: 'Dot spacing', min: 6, max: 30, step: 1, def: 12, desc: 'Wider spacing reads as a coarser print.' },
       { key: 'alpha', label: 'Coverage', min: 0.2, max: 1, step: 0.05, def: 0.85, desc: 'How much of the frame the dots cover.' },
     ],
-    draw(g, w, h, p) { drawHalftoneFromCanvas(g, w, h, p); },
+    draw(g, w, h, p, t, a) { drawHalftoneFromCanvas(g, w, h, p, a); },
   },
   pixelsort: {
     label: 'Pixel Sort', icon: '↕️', stage: 'post',
@@ -856,10 +889,14 @@ const LAYER_TYPES = {
       if (a.level < 0.05) return;
       const d = img.data;
       const y0 = Math.floor(Math.random() * (h - 40));
-      for (let y = y0; y < y0 + 40; y += 2) {
+      // Audit follow-up: the run length was random × amount and the row
+      // count fixed — now both scale with the level, so loud passages
+      // sort longer runs across more rows.
+      const span = Math.floor(8 + a.level * 40);
+      for (let y = y0; y < y0 + span; y += 2) {
         let x = 0;
         while (x < w) {
-          const segLen = 4 + Math.floor(Math.random() * 24 * p.amount);
+          const segLen = 4 + Math.floor(Math.random() * 24 * p.amount * (0.5 + a.level * 1.5));
           const seg = [];
           for (let k = 0; k < segLen && x + k < w; k++) {
             const i = (y * w + x + k) * 4;
@@ -878,13 +915,16 @@ const LAYER_TYPES = {
     params: [
       { key: 'threshold', label: 'Threshold', min: -0.3, max: 0.3, step: 0.02, def: 0, desc: 'Shifts the cut between dark and light.' },
     ],
-    image(img, w, h, p) {
+    image(img, w, h, p, t, a) {
       const d = img.data;
+      // Audit follow-up: the threshold was a fixed param — it now rides
+      // the level and the kick, so the dither breathes with the music.
+      const thr = p.threshold + (a.level - 0.5) * 0.4 + a.kick * 0.15;
       for (let y = 0; y < h; y++) {
         for (let x = 0; x < w; x++) {
           const i = (y * w + x) * 4;
           const lum = (d[i] * 0.3 + d[i + 1] * 0.6 + d[i + 2] * 0.1) / 255;
-          const on = lum + p.threshold > (BAYER4[y % 4][x % 4] + 0.5) / 16 ? 235 : 8;
+          const on = lum + thr > (BAYER4[y % 4][x % 4] + 0.5) / 16 ? 235 : 8;
           d[i] = on; d[i + 1] = on === 235 ? 245 : 10; d[i + 2] = on === 235 ? 255 : 16;
         }
       }
@@ -896,11 +936,15 @@ const LAYER_TYPES = {
     params: [
       { key: 'palette', type: 'select', label: 'Gradient', def: 'riso', options: Object.entries(GRADMAP_PALETTES).map(([v, p]) => [v, p.label]), desc: 'The gradient the brightness maps through.' },
     ],
-    image(img, w, h, p) {
+    image(img, w, h, p, t, a) {
       const lut = gradmapLut(GRADMAP_PALETTES[p.palette]?.stops || GRADMAP_PALETTES.riso.stops);
       const d = img.data;
+      // Audit follow-up: the palette was a fixed LUT — the stop position
+      // now shifts with the spectral centroid, so the duotone drifts as
+      // the track's brightness changes.
+      const shift = Math.round(((a.centroid || 0) / 8000) * 20);
       for (let i = 0; i < d.length; i += 4) {
-        const lum = Math.round(d[i] * 0.3 + d[i + 1] * 0.6 + d[i + 2] * 0.1);
+        const lum = Math.min(255, Math.max(0, Math.round(d[i] * 0.3 + d[i + 1] * 0.6 + d[i + 2] * 0.1) + shift));
         d[i] = lut[lum * 3]; d[i + 1] = lut[lum * 3 + 1]; d[i + 2] = lut[lum * 3 + 2];
       }
     },
@@ -911,8 +955,8 @@ const LAYER_TYPES = {
     params: [
       { key: 'offset', label: 'Offset', min: 1, max: 8, step: 1, def: 3, desc: 'How far the red channel shifts, in pixels.' },
     ],
-    image(img, w, h, p) {
-      const d = img.data, off = Math.round(p.offset);
+    image(img, w, h, p, t, a) {
+      const d = img.data, off = Math.round(p.offset + a.bass * 6 + a.kick * 4);
       const rRow = new Uint8Array(w);
       for (let y = 0; y < h; y++) {
         for (let x = 0; x < w; x++) rRow[x] = d[(y * w + x) * 4];
@@ -929,25 +973,46 @@ function fxOffscreen() {
 }
 /* Mesh gradient, written from scratch in 2D canvas (mmeshy model, not its
    WebGL shader — that repo has no LICENSE file, so nothing was reused).
-   Colour nodes drift slowly; the beat and bass swell the blobs. */
+   v0.2.7 item 7: the blobs used to drift on their own clock with only a
+   small bass/kick swell on the radius, so on screen they read as
+   unreactive. Now EVERYTHING about them answers the music: the radius
+   swells hard on bass + kick, each kick shoves the blobs outward from
+   the centre, the drift speed follows the level, the palette cycles
+   with the spectral centroid, and the alpha breathes with the level.
+   `react` (0..2, the layer's Reactivity slider) scales all of it —
+   0 is the old calm drift, 2 is violent. */
 function drawMeshGradient(g, w, h, p, t, a) {
   const pal = MESH_PALETTES[p.palette] || MESH_PALETTES.aurora;
+  a = a || {};
+  const react = p.react == null ? 1 : p.react;
+  const bass = a.bass || 0, kick = a.kick || 0, lv = a.level || 0;
+  const cent = a.centroid || 0;
+  // The palette steps round as the centroid climbs — bright music shifts
+  // the whole gradient to the next colour set.
+  const hueShift = Math.floor(cent / 1800) % pal.colors.length;
+  // Loud music moves the blobs faster; quiet music lets them drift.
+  const speed = 1 + lv * 1.4 * react;
   g.fillStyle = '#05070f'; g.fillRect(0, 0, w, h);
   const nodes = p.nodes || [{ x: 0.25, y: 0.3 }, { x: 0.72, y: 0.25 }, { x: 0.5, y: 0.8 }];
   g.save();
   g.globalCompositeOperation = 'lighter';
   nodes.forEach((n, i) => {
     const drift = p.swirl * 0.05;
-    const nx = (n.x + Math.sin(t * 0.12 + i * 2.1) * drift) * w;
-    const ny = (n.y + Math.cos(t * 0.09 + i * 1.7) * drift) * h;
-    const r = Math.min(w, h) * 0.55 * p.scale * (1 + a.bass * 0.3 + a.kick * 0.15);
-    const col = pal.colors[i % pal.colors.length];
-    const grad = g.createRadialGradient(nx, ny, 0, nx, ny, r);
+    const ph = t * speed;
+    const nx = (n.x + Math.sin(ph * 0.12 + i * 2.1) * drift) * w;
+    const ny = (n.y + Math.cos(ph * 0.09 + i * 1.7) * drift) * h;
+    // Kick shove: each blob jumps away from the centre on the beat.
+    const dx = nx - w / 2, dy = ny - h / 2, d = Math.hypot(dx, dy) || 1;
+    const shove = kick * 0.06 * Math.min(w, h) * react;
+    const px = nx + (dx / d) * shove, py = ny + (dy / d) * shove;
+    const r = Math.min(w, h) * 0.55 * p.scale * (1 + (bass * 0.9 + kick * 0.6) * react);
+    const col = pal.colors[(i + hueShift) % pal.colors.length];
+    const grad = g.createRadialGradient(px, py, 0, px, py, r);
     grad.addColorStop(0, col);
     grad.addColorStop(1, 'rgba(0,0,0,0)');
-    g.globalAlpha = 0.75;
+    g.globalAlpha = 0.5 + lv * 0.4;
     g.fillStyle = grad;
-    g.fillRect(nx - r, ny - r, r * 2, r * 2);
+    g.fillRect(px - r, py - r, r * 2, r * 2);
   });
   g.restore();
 }
@@ -975,12 +1040,15 @@ function drawGeometricFromCanvas(g, w, h, p, t, a) {
       const r = d[i], gg = d[i + 1], b = d[i + 2];
       const lum = (r * 0.3 + gg * 0.6 + b * 0.1) / 255;
       const kind = shapes[(gx * 7 + gy * 13) % shapes.length];
-      const s = Math.min(cw, chh) * (0.5 + lum * 0.6) * (1 + a.kick * 0.2);
+      // Audit follow-up: the size only read the kick ×0.2 and the spin
+      // ran on a constant clock. Size now punches on bass + kick, and
+      // the spin speed follows the level.
+      const s = Math.min(cw, chh) * (0.5 + lum * 0.6) * (1 + a.bass * 0.8 + a.kick * 0.5);
       const cx = gx * cw + cw / 2, cy = gy * chh + chh / 2;
       g.fillStyle = `rgb(${r},${gg},${b})`;
       g.save();
       g.translate(cx, cy);
-      g.rotate(Math.sin(t * 0.3 + gx + gy) * 0.3);
+      g.rotate(Math.sin(t * 0.3 * (0.3 + a.level) + gx + gy) * 0.3);
       if (kind === 'tri') {
         g.beginPath(); g.moveTo(0, -s / 2); g.lineTo(s / 2, s / 2); g.lineTo(-s / 2, s / 2); g.closePath(); g.fill();
       } else if (kind === 'circ') {
@@ -993,8 +1061,13 @@ function drawGeometricFromCanvas(g, w, h, p, t, a) {
   }
   g.restore();
 }
-function drawHalftoneFromCanvas(g, w, h, p) {
-  const cell = Math.max(4, Math.round(p.size * 1.5));
+function drawHalftoneFromCanvas(g, w, h, p, a) {
+  // Audit follow-up: the dots were sized by luminance only, at a fixed
+  // spacing. The dots now swell on kick + bass and the spacing tightens
+  // with the level. `a` is the audio bundle; default to silence so the
+  // function still works when called without it.
+  a = a || { kick: 0, bass: 0, level: 0 };
+  const cell = Math.max(4, Math.round(p.size * 1.5 * (1 - a.level * 0.2)));
   const img = sampleFrame(cell);
   const sw = img.width, sh = img.height, d = img.data;
   const cw = w / sw, chh = h / sh;
@@ -1006,7 +1079,7 @@ function drawHalftoneFromCanvas(g, w, h, p) {
     for (let gx = 0; gx < sw; gx++) {
       const i = (gy * sw + gx) * 4;
       const lum = (d[i] * 0.3 + d[i + 1] * 0.6 + d[i + 2] * 0.1) / 255;
-      const r = Math.max(0.5, (1 - lum) * Math.min(cw, chh) * 0.55);
+      const r = Math.max(0.5, (1 - lum) * Math.min(cw, chh) * 0.55 * (1 + a.kick * 0.4 + a.bass * 0.3));
       g.fillStyle = `rgb(${d[i]},${d[i + 1]},${d[i + 2]})`;
       g.beginPath(); g.arc(gx * cw + cw / 2, gy * chh + chh / 2, r, 0, Math.PI * 2); g.fill();
     }
@@ -1101,7 +1174,7 @@ const SCENES = {
   roll:       { label: 'Piano Roll', family: 'PULSE',   desc: 'MIDI notes on the grid' },
   fountain:   { label: 'Fountain',   family: 'PULSE',   desc: 'Particles spray with the beat' },
   pattern:    { label: 'Pattern',    family: 'PULSE',   desc: 'Generative riso-glyph motion' },
-  studio:     { label: 'Studio',     family: 'PULSE',   desc: 'All four panels at once' },
+  studio:     { label: 'Studio',     family: 'PULSE',   desc: 'Your chosen visualizers, side by side — right-click a quadrant to swap it' },
   geometric:  { label: 'Geometric',  family: 'PULSE',   desc: 'Spectrum as shapes (geometric-art)' },
   dither:     { label: 'Dither',     family: 'PULSE',   desc: 'Animated dither fields (dithr)' },
   depth:      { label: 'Depth',      family: 'PULSE',   desc: 'Photo depth map, parallaxed (Gather)' },
@@ -1214,22 +1287,31 @@ function drawSpectrum(x, y, w, h, big) {
   const t = THEMES[state.theme];
   const bands = mousikiBands();
   const n = big ? 32 : 24;
-  const bw = w / n;
-  ctx.fillStyle = barGradient(w, h);
-  for (let i = 0; i < n; i++) {
-    const v = bands[Math.floor(i * 64 / n)];
-    const bh = Math.max(2, v * h);
-    ctx.fillRect(x + i * bw + 1, y + h - bh, bw - 2, bh);
-  }
+  // v0.2.7 item 5: the Visualize spectrum runs the same Mousiki
+  // spring-damper + theme as the Play mini, with its OWN theme bundle
+  // (state.sceneVizTheme, persisted as cfg.vizThemes.sceneViz).
+  const theme = sceneVizTheme();
+  const targets = new Float32Array(n);
+  for (let i = 0; i < n; i++) targets[i] = bands[Math.floor(i * 64 / n)];
+  const vals = springBars(big ? 'sceneSpectrum' : 'sceneSpectrumStrip', targets, theme);
+  drawSpectrumBars(ctx, vals, x, y, w, h, theme);
   ctx.strokeStyle = t.grid; ctx.lineWidth = 1;
   ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
 }
 function drawScope(x, y, w, h) {
   const t = THEMES[state.theme];
-  ctx.strokeStyle = t.wave; ctx.lineWidth = 2; ctx.beginPath();
+  const theme = sceneVizTheme();
+  ctx.strokeStyle = theme.color || theme.colorLeft || t.wave; ctx.lineWidth = 2; ctx.beginPath();
   const step = Math.floor(waveData.length / w);
+  const smoothN = Math.max(1, Math.round((theme.fluidity || 5) / 2));
   for (let px = 0; px < w; px++) {
-    const v = waveData[Math.min(waveData.length - 1, px * step)] / 128 - 1;
+    const i = Math.min(waveData.length - 1, px * step);
+    let sum = 0, n = 0;
+    for (let k = -smoothN; k <= smoothN; k++) {
+      const j = Math.min(waveData.length - 1, Math.max(0, i + k));
+      sum += waveData[j] / 128 - 1; n++;
+    }
+    const v = sum / n;
     const py = y + h / 2 + v * (h / 2 - 4);
     px === 0 ? ctx.moveTo(x, py) : ctx.lineTo(x + px, py);
   }
@@ -1305,20 +1387,27 @@ function drawPattern(x, y, w, h) {
   const cols = 7, rows = 5;
   const cw = w / cols, chh = h / rows;
   const kick = analysis ? analysis.kickPulse : state.beat;
-  const pulse = 1 + kick * 0.35 + state.smoothLow * 0.25;
+  const lv = analysis ? analysis.level : 0;
+  const bands = mousikiBands();
+  // Audit follow-up: the glyphs used to spin on a constant clock with
+  // audio only scaling their size. The spin speed now follows the level,
+  // the size punches harder on kick + bass, and each glyph's alpha comes
+  // from its own frequency band.
+  const pulse = 1 + kick * 0.6 + state.smoothLow * 0.8;
   ctx.save();
   for (let gy = 0; gy < rows; gy++) {
     for (let gx = 0; gx < cols; gx++) {
       const cx = x + gx * cw + cw / 2, cy = y + gy * chh + chh / 2;
       const seed = gx * 7 + gy * 13;
       const kind = seed % 3;
-      const rot = now * (0.1 + (seed % 5) * 0.06) * (seed % 2 ? 1 : -1) + seed;
+      const rot = now * (0.1 + (seed % 5) * 0.06) * (0.3 + lv) * (seed % 2 ? 1 : -1) + seed;
       const s = Math.min(cw, chh) * 0.32 * pulse * (0.7 + 0.3 * Math.sin(now * 2 + seed));
+      const band = bands[Math.floor(((gy * cols + gx) / (rows * cols)) * 64)] || 0;
       ctx.save();
       ctx.translate(cx, cy);
       ctx.rotate(rot);
       ctx.fillStyle = t.bar[seed % 3];
-      ctx.globalAlpha = 0.45 + 0.45 * ((seed % 5) / 4);
+      ctx.globalAlpha = 0.3 + band * 0.6;
       if (kind === 0) { ctx.fillRect(-s / 2, -s / 2, s, s); }
       else if (kind === 1) {
         ctx.beginPath();
@@ -1411,10 +1500,15 @@ function drawDitherLook(x, y, w, h) {
   const now = currentTime();
   const field = DITHER_FIELDS[state.ditherField] || DITHER_FIELDS.smoke;
   const kick = analysis ? analysis.kickPulse : state.beat;
-  const tt = now * (1 + kick * 0.8);
+  const lv = analysis ? analysis.level : 0;
+  // Audit follow-up: the field clock used to run at now*(1+kick*0.8)
+  // with a small bass nudge on the threshold — audio was a passenger.
+  // The clock now runs on the level + kick, and the bass moves the
+  // threshold more than twice as far.
+  const tt = now * (0.5 + lv * 1.5 + kick);
   const cols = 96, rows = Math.max(8, Math.round(cols * (h / w)));
   const cw = w / cols, chh = h / rows;
-  const bassShift = (state.smoothLow - 0.2) * 0.25;
+  const bassShift = (state.smoothLow - 0.2) * 0.6;
   ctx.save();
   for (let gy = 0; gy < rows; gy++) {
     for (let gx = 0; gx < cols; gx++) {
@@ -1501,7 +1595,8 @@ function drawAsciiScene(x, y, w, h, audio) {
 function drawMeshScene(x, y, w, h, audio) {
   // The mesh gradient IS the scene: audio-reactive swirl/scale from the
   // same drawMeshGradient the layer uses, full-bleed, palette selectable.
-  const p = { palette: state.meshScenePalette, swirl: 0.5 + (audio.bass || 0) * 0.5, scale: 1 + (audio.kick || 0) * 0.35, nodes: [{ x: 0.25, y: 0.3 }, { x: 0.72, y: 0.25 }, { x: 0.5, y: 0.8 }] };
+  // v0.2.7: the scene's own Reactivity slider (state.meshSceneReact).
+  const p = { palette: state.meshScenePalette, react: state.meshSceneReact == null ? 1 : state.meshSceneReact, swirl: 0.5 + (audio.bass || 0) * 0.5, scale: 1 + (audio.kick || 0) * 0.35, nodes: [{ x: 0.25, y: 0.3 }, { x: 0.72, y: 0.25 }, { x: 0.5, y: 0.8 }] };
   ctx.save();
   ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip();
   ctx.translate(x, y);
@@ -1558,6 +1653,23 @@ function drawDepthLook(x, y, w, h) {
   const t = THEMES[state.theme];
   const kick = analysis ? analysis.kickPulse : state.beat;
   if (!depth.map) {
+    // v0.2.7 item 7: the empty depth look used to be a dead caption.
+    // Kick rings expand from the centre and the glow breathes with the
+    // level, so the slot stays alive until a depth map is estimated.
+    const lv = analysis ? analysis.level : 0;
+    const cx = x + w / 2, cy = y + h / 2;
+    ctx.save();
+    ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip();
+    // Level wash: the whole slot glows with the music, not just the rings.
+    ctx.globalAlpha = lv * 0.12; ctx.fillStyle = t.accent; ctx.fillRect(x, y, w, h);
+    for (let i = 0; i < 3; i++) {
+      const rr = Math.min(w, h) * (0.12 + i * 0.1) * (1 + kick * 0.5);
+      ctx.globalAlpha = Math.max(0.03, (0.28 - i * 0.07) * (0.5 + lv));
+      ctx.strokeStyle = t.accent; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(cx, cy, rr, 0, Math.PI * 2); ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+    ctx.restore();
     ctx.fillStyle = t.dim; ctx.textAlign = 'center';
     ctx.font = '15px "Paper Mono", ui-monospace, monospace';
     ctx.fillText('No depth map yet — load a photo in Cook and press Estimate depth', x + w / 2, y + h / 2 - 10);
@@ -1566,9 +1678,14 @@ function drawDepthLook(x, y, w, h) {
   }
   ctx.save();
   ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip();
-  // Heat depth map as the backdrop, dimmed.
+  // Heat depth map as the backdrop — its intensity breathes with the
+  // level (audit follow-up: the map used to sit static under the kick
+  // parallax). The photo layers also breathe — a slow bass zoom.
+  const lv = analysis ? analysis.level : 0;
+  const bass = state.smoothLow || 0;
+  const breathe = 1 + bass * 0.08;
   if (cook.depthHeatCanvas) {
-    ctx.globalAlpha = 0.55;
+    ctx.globalAlpha = 0.35 + lv * 0.4;
     ctx.drawImage(cook.depthHeatCanvas, x, y, w, h);
     ctx.globalAlpha = 1;
   }
@@ -1588,12 +1705,14 @@ function drawDepthLook(x, y, w, h) {
       lc.globalCompositeOperation = 'destination-in';
       lc.drawImage(mask, 0, 0, tw, th);
       lc.globalCompositeOperation = 'source-over';
-      ctx.drawImage(depthLookLayer, x + off, y, tw, th);
+      const dw = tw * breathe, dh = th * breathe;
+      ctx.drawImage(depthLookLayer, x + off - (dw - tw) / 2, y - (dh - th) / 2, dw, dh);
     };
     layer(cook.farMask, -dx);
     layer(cook.nearMask, dx);
   } else if (cook.src) {
-    ctx.drawImage(cook.src, x, y, w, h);
+    const dw = w * breathe, dh = h * breathe;
+    ctx.drawImage(cook.src, x - (dw - w) / 2, y - (dh - h) / 2, dw, dh);
   }
   ctx.restore();
   ctx.fillStyle = t.text; ctx.textAlign = 'left';
@@ -1602,7 +1721,7 @@ function drawDepthLook(x, y, w, h) {
   ctx.fillText(label, x + 4, y + 18);
   ctx.fillStyle = t.dim;
   ctx.font = '12px "Paper Mono", ui-monospace, monospace';
-  ctx.fillText(`near ↔ far sway with the kick · ${depth.depthW}×${depth.depthH} map`, x + 4, y + 36);
+  ctx.fillText(`near ↔ far sway with the kick · breathe with the bass · ${depth.depthW}×${depth.depthH} map`, x + 4, y + 36);
 }
 function midiRange() {
   if (!state.midi) return { lo: 36, hi: 96 };
@@ -1613,6 +1732,26 @@ function midiRange() {
 function drawRoll(x, y, w, h, showKeys) {
   const t = THEMES[state.theme];
   if (!state.midi) {
+    // v0.2.7 item 7: the empty roll used to be a dead caption. It still
+    // breathes now — the grid rows glow with the band energies, a
+    // playhead sweeps with the beat phase, and the whole slot lifts
+    // with the level — so it reads as music, not a still picture.
+    const bands = mousikiBands();
+    const kick = analysis ? analysis.kickPulse : state.beat;
+    const lv = analysis ? analysis.level : 0;
+    ctx.save();
+    ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip();
+    for (let i = 0; i < 12; i++) {
+      const ny = y + ((i + 0.5) / 12) * h;
+      const bv = bands[Math.floor(i * 64 / 12)] || 0;
+      ctx.fillStyle = `rgba(125, 211, 252, ${0.04 + bv * 0.5 + kick * 0.1})`;
+      ctx.fillRect(x, ny - 2, w, 4);
+    }
+    const ph = analysis && analysis.beatPhase >= 0 ? analysis.beatPhase : ((performance.now() / 500) % 1);
+    ctx.strokeStyle = t.accent; ctx.globalAlpha = 0.5 + lv * 0.5; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(x + ph * w, y); ctx.lineTo(x + ph * w, y + h); ctx.stroke();
+    ctx.globalAlpha = 1;
+    ctx.restore();
     ctx.fillStyle = t.dim; ctx.textAlign = 'center';
     ctx.font = '15px "Paper Mono", ui-monospace, monospace';
     ctx.fillText('No MIDI loaded — open the .mid file for this track (Ctrl+M)', x + w / 2, y + h / 2);
@@ -1691,11 +1830,16 @@ function setLook(look) {
   // Look options: grouped preset dropdowns (Dithr pattern) for the looks
   // that have them; the description is the preset's plain-English line.
   const opts = $('look-options');
-  const geo = $('geo-opt'), dit = $('dither-opt'), asc = $('ascii-scene-opt'), msh = $('mesh-scene-opt');
-  geo.hidden = dit.hidden = asc.hidden = msh.hidden = true;
+  const geo = $('geo-opt'), dit = $('dither-opt'), asc = $('ascii-scene-opt'), msh = $('mesh-scene-opt'), spc = $('spectrum-scene-opt');
+  geo.hidden = dit.hidden = asc.hidden = msh.hidden = spc.hidden = true;
   if (look === 'geometric') {
     opts.hidden = false; geo.hidden = false;
     updateLookDesc($('geo-preset'));
+  } else if (look === 'spectrum' || look === 'scope') {
+    // v0.2.7 item 5: the Visualize spectrum/scope has its own theme
+    // (Mousiki-style), separate from the Play tab's — picked here.
+    opts.hidden = false; spc.hidden = false;
+    updateLookDesc($('spectrum-scene-theme'));
   } else if (look === 'dither') {
     opts.hidden = false; dit.hidden = false;
     updateLookDesc($('dither-field'));
@@ -1729,6 +1873,18 @@ $('ascii-scene-style').addEventListener('change', (e) => {
 });
 $('mesh-scene-palette').addEventListener('change', (e) => {
   state.meshScenePalette = e.target.value;
+  updateLookDesc(e.target);
+});
+$('mesh-scene-react').addEventListener('input', (e) => {
+  state.meshSceneReact = Number(e.target.value) || 0;
+});
+// v0.2.7 item 5: the Visualize spectrum/scope theme picker — picking a
+// theme applies its whole bundle, persisted as cfg.vizThemes.sceneViz.
+$('spectrum-scene-theme').addEventListener('change', (e) => {
+  const p = SPECTRUM_THEMES[e.target.value];
+  if (!p) return;
+  state.sceneVizTheme = { ...p, name: e.target.value };
+  persistSceneVizTheme();
   updateLookDesc(e.target);
 });
 $('btn-randomize-look').addEventListener('click', () => {
@@ -2007,6 +2163,152 @@ $('btn-palette').addEventListener('click', openPalette);
 $('btn-viz-export').addEventListener('click', snapshotCurrent);
 $('btn-present').addEventListener('click', togglePresent);
 
+/* ---------- Spectrum analyzer theming, Mousiki-style (v0.2.7 item 5) ----------
+   Mousiki (itzender5820/mousiki, src/fft_visualizer.cpp + config.txt) has
+   no named theme packs — its "theme" IS the per-element settings: two
+   colours for the visualizer strip (ColorVizLeft / ColorVizRight, a
+   left→right gradient), plus three animation params that shape how the
+   bars move — VisualizerFluidity (1–10), VisualizerDegradationSpeed
+   (1–10), VisualizerViscosity (0–10) — and WaveformStyle (raw/smooth),
+   all persisted in config.txt and edited in-app. Its FFT visualizer is
+   32 mirrored bands (bass in the centre, treble at both edges), bars
+   0–8 rows high, driven by a spring-damper per bar: fluidity sets the
+   rise (spring_k 55→20, damping 0.35→0.20), degradation sets the fall
+   (release_k 15→140 — bars fall FASTER than they rise, like a real VU
+   meter), viscosity blends neighbouring bars ("surface tension"), and
+   the two edge bars are pinned to the baseline so the strip always
+   reads as one mountain.
+   Pulse Suite keeps that model and adds named presets on top, because
+   Austin asked to switch AWAY from the smooth Material look to other
+   themes — ASCII included. A theme is a full bundle (style + colours +
+   the three Mousiki params); picking one applies the bundle, tweaking
+   a slider after that marks it Custom. The theme is stored PER
+   VISUALIZER — the Play spectrum, the Play waveform, and the Visualize
+   spectrum/scope each keep their own, persisted in pulse-config.json. */
+const SPECTRUM_THEMES = {
+  mousiki: { label: 'Mousiki', style: 'blocks', colorMode: 'gradient', colorLeft: '#7dd3fc', colorRight: '#f472b6', fluidity: 10, degradation: 10, viscosity: 1, desc: 'Mousiki’s own — springy bars, bass in the centre, sky-to-pink gradient.' },
+  ascii: { label: 'ASCII', style: 'ascii', colorMode: 'solid', colorLeft: '#fbbf24', colorRight: '#fbbf24', fluidity: 5, degradation: 5, viscosity: 0, desc: 'Raw terminal — bars drawn as ASCII characters in amber, no smoothing between bars.' },
+  vu: { label: 'VU Meter', style: 'blocks', colorMode: 'gradient', colorLeft: '#f59e0b', colorRight: '#ef4444', fluidity: 3, degradation: 1, viscosity: 2, desc: 'Old-school VU — slow rise, slower fade, amber into red.' },
+  neon: { label: 'Neon', style: 'blocks', colorMode: 'gradient', colorLeft: '#e879f9', colorRight: '#22d3ee', fluidity: 8, degradation: 8, viscosity: 1, desc: 'Hot magenta to cyan, fast and punchy.' },
+  matrix: { label: 'Matrix', style: 'ascii', colorMode: 'solid', colorLeft: '#22c55e', colorRight: '#22c55e', fluidity: 6, degradation: 6, viscosity: 0, desc: 'Green ASCII rain characters for the bars.' },
+  mono: { label: 'Mono Line', style: 'line', colorMode: 'solid', colorLeft: '#cbd5e1', colorRight: '#cbd5e1', fluidity: 5, degradation: 5, viscosity: 1, desc: 'One grey line across the bar tops — no colour, no fuss.' },
+};
+const ASCII_RAMP = ' .:-=+*#%@'; // 10 levels, Mousiki's 0–8 rows + headroom
+// Per-visualizer theme bundles. The Play spectrum/waveform read theirs
+// from their module params (persisted under cfg.modules); the Visualize
+// spectrum/scope keeps its own bundle in state, persisted as
+// cfg.vizThemes.sceneViz.
+function vizThemeFor(id) {
+  const v = moduleVals(id);
+  const preset = SPECTRUM_THEMES[v.theme] || SPECTRUM_THEMES.mousiki;
+  return {
+    name: SPECTRUM_THEMES[v.theme] ? v.theme : 'custom',
+    style: preset.style, colorMode: preset.colorMode,
+    colorLeft: v.colorLeft || preset.colorLeft,
+    colorRight: v.colorRight || preset.colorRight,
+    fluidity: Number(v.fluidity) || preset.fluidity,
+    degradation: Number(v.degradation) || preset.degradation,
+    viscosity: Number(v.viscosity) || 0,
+    color: v.color || '',
+  };
+}
+function sceneVizTheme() {
+  return state.sceneVizTheme || SPECTRUM_THEMES.mousiki;
+}
+function persistSceneVizTheme() {
+  if (window.pulse && window.pulse.setConfig) window.pulse.setConfig({ vizThemes: { sceneViz: state.sceneVizTheme } }).catch(() => {});
+}
+// Mousiki's spring-damper, ported 1:1 from fft_visualizer.cpp
+// (compute_bars). One state per visualizer instance (key), so the Play
+// spectrum and the Visualize spectrum don't fight over one spring.
+const vizSprings = {};
+function vizDt() {
+  if (window.__vizDt) return window.__vizDt; // smoke test drives the clock
+  return state.frameDt || 1 / 60;
+}
+function springBars(key, targets, theme) {
+  const n = targets.length;
+  let s = vizSprings[key];
+  if (!s || s.n !== n) s = vizSprings[key] = { n, bars: new Float32Array(n), vel: new Float32Array(n) };
+  const tf = Math.min(1, Math.max(0, (theme.fluidity - 1) / 9));
+  const td = Math.min(1, Math.max(0, (theme.degradation - 1) / 9));
+  const springK = 55 - tf * 35, damping = 0.35 - tf * 0.15, releaseK = 15 + td * 125;
+  const visc = (theme.viscosity || 0) / 10 * 0.20;
+  const d = Math.min(Math.max(vizDt(), 0.001), 0.5);
+  for (let i = 0; i < n; i++) {
+    const falling = targets[i] < s.bars[i];
+    if (falling && s.vel[i] > 0) s.vel[i] *= 0.15; // kill leftover rise on the flip, or drops feel sluggish
+    const k = falling ? releaseK : springK;
+    s.vel[i] += (targets[i] - s.bars[i]) * k * d;
+    s.vel[i] *= (1 - Math.min(Math.max(damping, 0), 0.95));
+    s.bars[i] = Math.min(1, Math.max(0, s.bars[i] + s.vel[i] * d));
+  }
+  if (visc > 0 && n > 2) {
+    const b = Float32Array.from(s.bars);
+    for (let i = 0; i < n; i++) {
+      const l = i > 0 ? b[i - 1] : b[i], r = i < n - 1 ? b[i + 1] : b[i];
+      s.bars[i] = b[i] * (1 - visc) + (l + r) * 0.5 * visc;
+    }
+  }
+  s.bars[0] = 0; s.bars[n - 1] = 0; // Mousiki: edges pinned to the baseline
+  return s.bars;
+}
+function themeColorAt(theme, i, n, val) {
+  if (theme.color) return theme.color;
+  if (theme.colorMode === 'solid') return theme.colorLeft;
+  if (theme.colorMode === 'hue') return `hsl(${200 + i * 1.2}, 80%, ${45 + val * 30}%)`;
+  // gradient: left→right across the strip (Mousiki's ColorVizLeft/Right)
+  const t = n > 1 ? i / (n - 1) : 0;
+  const pa = hexRgb(theme.colorLeft), pb = hexRgb(theme.colorRight);
+  return `rgb(${Math.round(pa[0] + (pb[0] - pa[0]) * t)},${Math.round(pa[1] + (pb[1] - pa[1]) * t)},${Math.round(pa[2] + (pb[2] - pa[2]) * t)})`;
+}
+function hexRgb(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex || '');
+  if (!m) return [125, 211, 252];
+  const v = parseInt(m[1], 16);
+  return [(v >> 16) & 255, (v >> 8) & 255, v & 255];
+}
+// One bar renderer for every spectrum in the app — Play mini, Visualize
+// spectrum, scope strip. `vals` are 0..1 bar heights, `g` any 2d ctx.
+function drawSpectrumBars(g, vals, x, y, w, h, theme) {
+  const n = vals.length, bw = w / n;
+  if (theme.style === 'line') {
+    g.strokeStyle = themeColorAt(theme, 0, n, 0.5); g.lineWidth = 2; g.beginPath();
+    for (let i = 0; i < n; i++) {
+      const px = x + i * bw + bw / 2, py = y + h - Math.max(2, vals[i] * h);
+      i === 0 ? g.moveTo(px, py) : g.lineTo(px, py);
+    }
+    g.stroke();
+    g.fillStyle = themeColorAt(theme, 0, n, 0.5); g.globalAlpha = 0.12;
+    g.lineTo(x + w, y + h); g.lineTo(x, y + h); g.closePath(); g.fill(); g.globalAlpha = 1;
+    return;
+  }
+  for (let i = 0; i < n; i++) {
+    const v = vals[i], bh = Math.max(0, v * h);
+    if (bh < 1) continue;
+    const col = themeColorAt(theme, i, n, v);
+    if (theme.style === 'ascii') {
+      // Mousiki bars are 0–8 rows: the character IS the height.
+      const ch = ASCII_RAMP[Math.min(ASCII_RAMP.length - 1, Math.round(v * (ASCII_RAMP.length - 1)))];
+      const fs = Math.max(6, Math.min(bw * 1.6, h * 0.9));
+      g.fillStyle = col; g.font = `bold ${fs}px ui-monospace, "Cascadia Mono", monospace`;
+      g.textAlign = 'center'; g.textBaseline = 'bottom';
+      g.fillText(ch, x + i * bw + bw / 2, y + h - 1);
+    } else if (theme.style === 'dots') {
+      const rows = Math.max(1, Math.round(v * 8)), r = Math.max(1.5, Math.min(bw / 2 - 1, h / 18));
+      g.fillStyle = col;
+      for (let row = 0; row < rows; row++) {
+        g.beginPath();
+        g.arc(x + i * bw + bw / 2, y + h - r - row * (r * 2 + 2), r, 0, Math.PI * 2);
+        g.fill();
+      }
+    } else {
+      g.fillStyle = col;
+      g.fillRect(x + i * bw + 1, y + h - bh, bw - 2, bh);
+    }
+  }
+}
+
 /* ---------- Play tab mini visualizers ---------- */
 function drawMiniSpectrum() {
   const c = $('play-spectrum');
@@ -2017,18 +2319,21 @@ function drawMiniSpectrum() {
   g.fillStyle = '#0b1220'; g.fillRect(0, 0, w, h);
   // v0.2.6: the spectrum is a module — bands / sensitivity / colour come
   // from its editor (right-click it), not from hardcoded constants.
+  // v0.2.7 item 5: the bars now run through Mousiki's spring-damper and
+  // draw in the module's THEME (blocks / ASCII / dots / line + colours +
+  // fluidity / fall / viscosity), not the old smooth gradient.
   const v = moduleVals('spectrum');
   const bars = Number(v.bands) || 64;
   const sens = Number(v.sensitivity) || 1;
   const bands = mousikiBands();
-  const bw = w / bars;
+  const targets = new Float32Array(bars);
   for (let i = 0; i < bars; i++) {
     const bv = v.mirrored ? bands[Math.floor(i * 64 / bars)] : (analysis ? analysis.bands64[Math.floor(i * 64 / bars)] : bands[Math.floor(i * 64 / bars)]);
-    const val = Math.min(1, bv * sens);
-    const bh = Math.max(2, val * h);
-    g.fillStyle = v.color ? v.color : `hsl(${200 + i * 1.2}, 80%, ${45 + val * 30}%)`;
-    g.fillRect(i * bw + 1, h - bh, bw - 2, bh);
+    targets[i] = Math.min(1, bv * sens);
   }
+  const theme = vizThemeFor('spectrum');
+  const vals = springBars('playSpectrum', targets, theme);
+  drawSpectrumBars(g, vals, 0, 0, w, h, theme);
 }
 function drawMiniWave() {
   const c = $('play-waveform');
@@ -2038,17 +2343,28 @@ function drawMiniWave() {
   if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
   g.fillStyle = '#0b1220'; g.fillRect(0, 0, w, h);
   // v0.2.6: waveform module settings (style raw/smooth, sensitivity, colour).
+  // v0.2.7 item 5: the line colour + smoothing come from the waveform's
+  // own theme (Mousiki's WaveformStyle raw/smooth is the style param;
+  // fluidity is the smoothing window).
   const v = moduleVals('waveform');
   const sens = Number(v.sensitivity) || 1;
-  g.strokeStyle = v.color || '#7dd3fc'; g.lineWidth = 2; g.beginPath();
+  const theme = vizThemeFor('waveform');
+  g.strokeStyle = theme.color || theme.colorLeft || '#7dd3fc'; g.lineWidth = 2; g.beginPath();
   const step = Math.floor(waveData.length / w);
+  const smoothN = Math.max(1, Math.round((theme.fluidity || 5) / 2));
   const at = (px) => {
     const i = Math.min(waveData.length - 1, px * step);
     if (v.style === 'smooth') {
       const a = waveData[Math.max(0, i - 1)] / 128 - 1, b = waveData[i] / 128 - 1, d = waveData[Math.min(waveData.length - 1, i + 1)] / 128 - 1;
       return (a + b * 2 + d) / 4;
     }
-    return waveData[i] / 128 - 1;
+    // Raw, with the theme's fluidity as a small moving-average window.
+    let sum = 0, n = 0;
+    for (let k = -smoothN; k <= smoothN; k++) {
+      const j = Math.min(waveData.length - 1, Math.max(0, i + k));
+      sum += waveData[j] / 128 - 1; n++;
+    }
+    return sum / n;
   };
   for (let px = 0; px < w; px++) {
     const val = Math.max(-1, Math.min(1, at(px) * sens));
@@ -2070,6 +2386,15 @@ const MODULES = {
   spectrum: {
     name: 'Spectrum analyzer',
     params: [
+      // v0.2.7 item 5: Mousiki-style themes — picking one applies its
+      // whole bundle (style + colours + fluidity / fall / viscosity);
+      // tweaking a slider after that marks it Custom.
+      { key: 'theme', label: 'Theme', type: 'select', options: [['mousiki', 'Mousiki — springy gradient bars'], ['ascii', 'ASCII — terminal characters, amber'], ['vu', 'VU Meter — slow amber-to-red'], ['neon', 'Neon — magenta to cyan'], ['matrix', 'Matrix — green ASCII'], ['mono', 'Mono Line — one grey line'], ['custom', 'Custom — your own mix']], def: 'mousiki', desc: 'Mousiki’s theme model: a theme is its colours plus how the bars move. Pick one, or tweak the sliders below and it becomes Custom.' },
+      { key: 'fluidity', label: 'Fluidity (rise)', type: 'range', min: 1, max: 10, step: 1, def: 10, desc: 'Mousiki’s VisualizerFluidity — how springy the bars rise. 1 is snappy, 10 floats.' },
+      { key: 'degradation', label: 'Fall speed', type: 'range', min: 1, max: 10, step: 1, def: 10, desc: 'Mousiki’s VisualizerDegradationSpeed — how fast bars fall. 1 is a slow VU fade, 10 snaps to zero.' },
+      { key: 'viscosity', label: 'Viscosity (blend)', type: 'range', min: 0, max: 10, step: 1, def: 1, desc: 'Mousiki’s VisualizerViscosity — how much neighbouring bars pull on each other.' },
+      { key: 'colorLeft', label: 'Colour — left', type: 'color', def: '#7dd3fc', desc: 'Mousiki’s ColorVizLeft — the gradient’s left end.' },
+      { key: 'colorRight', label: 'Colour — right', type: 'color', def: '#f472b6', desc: 'Mousiki’s ColorVizRight — the gradient’s right end.' },
       { key: 'bands', label: 'Bands', type: 'select', options: [['16', '16 bands'], ['32', '32 bands'], ['64', '64 bands']], def: '64', desc: 'How many bars the analyzer draws — 64 is the full mirrored Mousiki set.' },
       { key: 'sensitivity', label: 'Sensitivity', type: 'range', min: 0.2, max: 2, step: 0.05, def: 1, desc: 'How hard the bars hit — higher means quiet parts read louder.' },
       { key: 'mirrored', label: 'Mirrored (bass in the centre)', type: 'toggle', def: true, desc: 'Mousiki-style: bass sits in the middle, treble falls off to both edges.' },
@@ -2080,9 +2405,13 @@ const MODULES = {
   waveform: {
     name: 'Waveform',
     params: [
+      { key: 'theme', label: 'Theme', type: 'select', options: [['mousiki', 'Mousiki — sky line'], ['ascii', 'ASCII — amber line'], ['vu', 'VU Meter — amber line'], ['neon', 'Neon — magenta line'], ['matrix', 'Matrix — green line'], ['mono', 'Mono Line — grey line'], ['custom', 'Custom — your own mix']], def: 'mousiki', desc: 'The waveform’s theme — its colour and how much the line is smoothed. Tweaking the sliders below marks it Custom.' },
+      { key: 'fluidity', label: 'Fluidity (smoothing)', type: 'range', min: 1, max: 10, step: 1, def: 10, desc: 'How much the line is smoothed — Mousiki’s fluidity, as a moving-average window.' },
+      { key: 'colorLeft', label: 'Line colour', type: 'color', def: '#7dd3fc', desc: 'The theme’s line colour (left colour of the pair).' },
+      { key: 'colorRight', label: 'Colour — right', type: 'color', def: '#f472b6', desc: 'Second theme colour — used by the Visualize scope strip, not the Play line.' },
       { key: 'style', label: 'Style', type: 'select', options: [['raw', 'Raw — every sample'], ['smooth', 'Smooth — averaged']], def: 'raw', desc: 'Mousiki’s waveform styles.' },
       { key: 'sensitivity', label: 'Sensitivity', type: 'range', min: 0.2, max: 2, step: 0.05, def: 1, desc: 'How hard the line swings.' },
-      { key: 'color', label: 'Line colour', type: 'color', def: '', desc: 'Empty means the theme accent.' },
+      { key: 'color', label: 'Line colour', type: 'color', def: '', desc: 'Empty means the theme colour; pick a colour to pin the line to one hue.' },
       { key: 'visible', label: 'Show this module', type: 'toggle', def: true },
     ],
   },
@@ -2114,6 +2443,31 @@ const MODULES = {
       { key: 'visible', label: 'Show this module', type: 'toggle', def: true },
       { key: 'blipSize', label: 'Blip size', type: 'range', min: 0.5, max: 3, step: 0.25, def: 1, desc: 'How big the kick/snare/hat/chord blips draw.' },
       { key: 'trail', label: 'Trail length (s)', type: 'range', min: 1, max: 5, step: 0.5, def: 2.6, desc: 'How long a blip stays on the map before fading.' },
+      // v0.2.7 item 6: the map is a module now — theme, grid, shapes,
+      // per-type on/off + colours, and how many blips it keeps.
+      { key: 'mapTheme', label: 'Colour theme', type: 'select', options: [['neon', 'Neon'], ['ember', 'Ember'], ['matrix', 'Matrix'], ['mono', 'Mono']], def: 'neon', desc: 'The palette every blip type draws from (per-type colours below override it).' },
+      { key: 'grid', label: 'Grid style', type: 'select', options: [['grid', 'Grid lines'], ['dots', 'Dot lattice'], ['rings', 'Concentric rings'], ['none', 'Bare']], def: 'grid' },
+      { key: 'gridDensity', label: 'Grid density', type: 'range', min: 2, max: 16, step: 1, def: 8, desc: 'How many columns the grid / dot lattice draws.' },
+      { key: 'shape', label: 'Blip shape', type: 'select', options: [['mixed', 'Mixed — each type its own'], ['circle', 'Circles'], ['diamond', 'Diamonds'], ['square', 'Squares']], def: 'mixed' },
+      { key: 'trailStyle', label: 'Trail style', type: 'select', options: [['fade', 'Fade — dot + expanding ring'], ['ring', 'Ring only'], ['comet', 'Comet — dot + tail toward centre']], def: 'fade' },
+      { key: 'connect', label: 'Connect blips in time order', type: 'toggle', def: true, desc: 'Draws a line through the last blips in the order they landed.' },
+      { key: 'maxBlips', label: 'Max blips', type: 'range', min: 20, max: 200, step: 10, def: 90, desc: 'Oldest blips drop off past this many.' },
+      { key: 'showKick', label: 'Show KICK blips', type: 'toggle', def: true },
+      { key: 'showSnare', label: 'Show SNARE blips', type: 'toggle', def: true },
+      { key: 'showHat', label: 'Show HAT blips', type: 'toggle', def: true },
+      { key: 'showChord', label: 'Show CHORD blips', type: 'toggle', def: true },
+      { key: 'showBass', label: 'Show BASS blips', type: 'toggle', def: true },
+      { key: 'showVox', label: 'Show VOCALS blips', type: 'toggle', def: true },
+      { key: 'showBeat', label: 'Show BEAT markers', type: 'toggle', def: true },
+      { key: 'showBar', label: 'Show BAR markers', type: 'toggle', def: true },
+      { key: 'showDrop', label: 'Show DROP flashes', type: 'toggle', def: true },
+      { key: 'showNote', label: 'Show NOTE blips', type: 'toggle', def: true },
+      { key: 'colorKick', label: 'KICK colour', type: 'color', def: '', desc: 'Empty means the theme colour.' },
+      { key: 'colorSnare', label: 'SNARE colour', type: 'color', def: '' },
+      { key: 'colorHat', label: 'HAT colour', type: 'color', def: '' },
+      { key: 'colorChord', label: 'CHORD colour', type: 'color', def: '' },
+      { key: 'colorBass', label: 'BASS colour', type: 'color', def: '' },
+      { key: 'colorVox', label: 'VOCALS colour', type: 'color', def: '' },
     ],
   },
   'code-panel': {
@@ -2231,10 +2585,24 @@ function openModuleEditor(id) {
     applyModule(id); persistModules();
     openModuleEditor(id); // re-render with defaults
   };
-  dlg.showModal();
+  if (!dlg.open) dlg.showModal();
 }
 function setModuleParam(id, key, value) {
   if (!moduleSettings[id]) moduleSettings[id] = {};
+  // v0.2.7 item 5: picking a spectrum/waveform theme applies its whole
+  // bundle (Mousiki model — a theme IS its colours + animation params).
+  if ((id === 'spectrum' || id === 'waveform') && key === 'theme' && SPECTRUM_THEMES[value]) {
+    const p = SPECTRUM_THEMES[value];
+    Object.assign(moduleSettings[id], { theme: value, fluidity: p.fluidity, degradation: p.degradation, viscosity: p.viscosity, colorLeft: p.colorLeft, colorRight: p.colorRight });
+    applyModule(id); persistModules();
+    openModuleEditor(id); // re-render so the sliders show the preset
+    return;
+  }
+  // Tweaking a theme param by hand marks the theme Custom (the dialog's
+  // select catches up next time it opens).
+  if ((id === 'spectrum' || id === 'waveform') && ['fluidity', 'degradation', 'viscosity', 'colorLeft', 'colorRight'].includes(key)) {
+    moduleSettings[id].theme = 'custom';
+  }
   moduleSettings[id][key] = value;
   applyModule(id);
   persistModules();
@@ -2300,6 +2668,19 @@ function showModuleMenu(x, y, target) {
   menu.style.top = Math.min(y, window.innerHeight - mh - 8) + 'px';
 }
 document.addEventListener('contextmenu', (e) => {
+  // v0.2.7 item 2: right-click a Studio quadrant to SWAP it. The canvas
+  // is inside .panel, so this has to run before the generic module menu.
+  if (e.target === canvas && state.look === 'studio' && state.studioRects.length) {
+    const r = canvas.getBoundingClientRect();
+    const cx = (e.clientX - r.left) * (canvas.width / r.width);
+    const cy = (e.clientY - r.top) * (canvas.height / r.height);
+    const idx = state.studioRects.findIndex((s) => cx >= s.x && cx <= s.x + s.w && cy >= s.y && cy <= s.y + s.h);
+    if (idx >= 0) {
+      e.preventDefault();
+      showStudioSwapMenu(e.clientX, e.clientY, idx);
+      return;
+    }
+  }
   // v0.2.6: right-click a module or panel to edit it. Outside the panels
   // (tab bar, transport) the browser menu stays as it was.
   const t = e.target.closest ? e.target.closest('[data-module], [data-layout-panel], .panel') : null;
@@ -2463,9 +2844,118 @@ $('btn-mc-collapse').addEventListener('click', () => {
   mc.classList.toggle('collapsed');
   $('btn-mc-collapse').textContent = mc.classList.contains('collapsed') ? '▸ Expand' : '▾ Collapse';
 });
+/* ---------- Studio slots (v0.2.7 item 2): draw ANY scene into a rect ----------
+   One dispatcher for the whole Visualize tab: the single-look path and the
+   Studio grid both go through here, so every scene is swappable. The
+   original 13 draws take (x, y, w, h) on the global ctx; scope/orbit keep
+   their old proportions inside the rect they're given. */
+function drawSceneInto(id, x, y, w, h, audio) {
+  if (id === 'spectrum') drawSpectrum(x, y, w, h, true);
+  else if (id === 'scope') {
+    drawScope(x, y + h * 0.2, w, h * 0.6);
+    drawSpectrum(x, y + h * 0.86, w, h * 0.12, false);
+  } else if (id === 'orbit') drawOrbit(x + w / 2, y + h / 2, Math.min(w, h) * 0.32);
+  else if (id === 'roll') drawRoll(x, y, w, h, true);
+  else if (id === 'fountain') drawFountain(x, y, w, h);
+  else if (id === 'pattern') drawPattern(x, y, w, h);
+  else if (id === 'geometric') drawGeometricLook(x, y, w, h);
+  else if (id === 'dither') drawDitherLook(x, y, w, h);
+  else if (id === 'depth') drawDepthLook(x, y, w, h);
+  else if (id === 'ascii') drawAsciiScene(x, y, w, h, audio);
+  else if (id === 'mesh') drawMeshScene(x, y, w, h, audio);
+  else if (id === 'glitch') drawGlitchScene(x, y, w, h, audio);
+  else if (window.PULSE_SCENES_026 && window.PULSE_SCENES_026.draw[id]) {
+    // v0.2.6: the 37 new scenes live in scenes-026.js and draw from the
+    // same audio bundle as the original 13.
+    drawScene026(id, x, y, w, h, audio);
+  } else {
+    // Unknown id (e.g. a scene removed since the config was saved): fall
+    // back to the spectrum so the slot never goes blank.
+    drawSpectrum(x, y, w, h, true);
+  }
+}
+// Studio grid: 1 slot fills the stage; 2 sit side by side; 3–4 make a
+// 2×2; 5–6 a 3×2; 7–8 a 4×2. Slot rects are remembered for hit-testing
+// (right-click a quadrant to swap it).
+function studioSlotRects(x, y, w, h, n) {
+  const gap = 14;
+  const cols = n <= 1 ? 1 : n <= 2 ? 2 : n <= 4 ? 2 : n <= 6 ? 3 : 4;
+  const rows = Math.ceil(n / cols);
+  const cw = (w - gap * (cols - 1)) / cols, ch = (h - gap * (rows - 1)) / rows;
+  const rects = [];
+  for (let i = 0; i < n; i++) {
+    const c = i % cols, r = Math.floor(i / cols);
+    rects.push({ x: x + c * (cw + gap), y: y + r * (ch + gap), w: cw, h: ch });
+  }
+  return rects;
+}
+function drawStudio(x, y, w, h, audio) {
+  const slots = state.studioSlots.filter((id) => SCENES[id] && id !== 'studio');
+  if (!slots.length) { state.studioSlots = ['scope', 'spectrum', 'roll', 'orbit']; return drawStudio(x, y, w, h, audio); }
+  const rects = studioSlotRects(x, y, w, h, slots.length);
+  state.studioRects = rects.map((r, i) => ({ ...r, id: slots[i] }));
+  slots.forEach((id, i) => {
+    const r = rects[i];
+    const label = (SCENES[id] && SCENES[id].label ? SCENES[id].label : id).toUpperCase()
+      + (id === 'roll' && state.midi ? ` — ${state.midiName}` : '');
+    drawPanel(r.x, r.y, r.w, r.h, label);
+    drawSceneInto(id, r.x + 12, r.y + 30, r.w - 24, r.h - 44, audio);
+  });
+}
+function persistStudioSlots() {
+  if (window.pulse && window.pulse.setConfig) window.pulse.setConfig({ studioSlots: state.studioSlots }).catch(() => {});
+}
+// Right-click a Studio quadrant: swap it for any of the 50 scenes, add a
+// slot, remove this slot, or reset to the classic four. Built on the same
+// .paper-menu as the module menu so it looks hand-made, not Material.
+function showStudioSwapMenu(mx, my, slotIdx) {
+  const menu = $('module-menu');
+  const cur = state.studioSlots[slotIdx];
+  const items = [];
+  items.push({ label: `SLOT ${slotIdx + 1} — ${SCENES[cur] ? SCENES[cur].label : cur}`, head: true });
+  const fams = [];
+  for (const id of SCENE_ORDER) {
+    if (id === 'studio' || !SCENES[id]) continue;
+    if (!fams.includes(SCENES[id].family)) fams.push(SCENES[id].family);
+  }
+  for (const fam of fams) {
+    items.push({ label: fam, head: true });
+    for (const id of SCENE_ORDER) {
+      if (id === 'studio' || !SCENES[id] || SCENES[id].family !== fam) continue;
+      items.push({ label: (id === cur ? '● ' : '○ ') + SCENES[id].label, run: () => { state.studioSlots[slotIdx] = id; persistStudioSlots(); } });
+    }
+  }
+  items.push({ sep: true });
+  if (state.studioSlots.length < 8) items.push({ label: '＋ Add a slot', run: () => { state.studioSlots.push('spectrum'); persistStudioSlots(); } });
+  if (state.studioSlots.length > 1) items.push({ label: '− Remove this slot', run: () => { state.studioSlots.splice(slotIdx, 1); persistStudioSlots(); } });
+  items.push({ label: 'Reset to the classic four', run: () => { state.studioSlots = ['scope', 'spectrum', 'roll', 'orbit']; persistStudioSlots(); } });
+  menu.innerHTML = '';
+  for (const it of items) {
+    if (it.sep) { const hr = document.createElement('div'); hr.style.cssText = 'border-top:1px solid var(--app-border);margin:4px 0;'; menu.appendChild(hr); continue; }
+    if (it.head) { const hd = document.createElement('div'); hd.className = 'menu-head'; hd.textContent = it.label; menu.appendChild(hd); continue; }
+    const b = document.createElement('button');
+    b.className = 'paper-menu-item'; b.textContent = it.label;
+    b.addEventListener('click', () => { menu.hidden = true; it.run(); });
+    menu.appendChild(b);
+  }
+  menu.hidden = false;
+  // 50 scenes is a long menu — scroll it instead of letting it run off
+  // the bottom of the screen.
+  menu.style.maxHeight = '70vh';
+  menu.style.overflowY = 'auto';
+  const mw = 260;
+  menu.style.left = Math.min(mx, window.innerWidth - mw - 8) + 'px';
+  menu.style.top = Math.min(my, window.innerHeight - 200) + 'px';
+}
+
 function render() {
   const w = canvas.width, h = canvas.height;
   const t = THEMES[state.theme];
+  // Frame dt, once per frame — the spectrum springs (Mousiki model) all
+  // read this, so the Play and Visualize visualizers advance together.
+  const frameNowMs = performance.now();
+  if (state._lastFrameMs) state.frameDt = Math.min(Math.max((frameNowMs - state._lastFrameMs) / 1000, 0.001), 0.1);
+  state._lastFrameMs = frameNowMs;
 
   if (state.analyser) {
     state.analyser.getByteFrequencyData(freqData);
@@ -2499,7 +2989,7 @@ function render() {
   state.beat *= 0.9;
 
   if (activeTab === 'visualize' && w > 0) {
-    const audio = { kick: analysis ? analysis.kickPulse : state.beat, bass: state.smoothLow, level: analysis ? analysis.level : 0, t: performance.now() / 1000 };
+    const audio = { kick: analysis ? analysis.kickPulse : state.beat, bass: state.smoothLow, level: analysis ? analysis.level : 0, t: performance.now() / 1000, centroid: analysis ? analysis.centroid : 0, bands32: analysis ? analysis.bands32 : null };
     // Mesh backdrop layer draws behind the look; otherwise the theme gradient.
     const meshLayer = layers.stack.find((l) => l.enabled && l.type === 'mesh');
     if (meshLayer) drawMeshGradient(ctx, w, h, meshLayer.params, audio.t, audio);
@@ -2510,45 +3000,10 @@ function render() {
       ctx.fillStyle = t.dim; ctx.textAlign = 'center';
       ctx.font = '16px "Paper Mono", ui-monospace, monospace';
       ctx.fillText('Open a track to begin', w / 2, h / 2);
-    } else if (state.look === 'spectrum') {
-      drawSpectrum(pad, top, cw, ch, true);
-    } else if (state.look === 'scope') {
-      drawScope(pad, top + ch * 0.2, cw, ch * 0.6);
-      drawSpectrum(pad, top + ch * 0.86, cw, ch * 0.12, false);
-    } else if (state.look === 'orbit') {
-      drawOrbit(w / 2, top + ch / 2, Math.min(cw, ch) * 0.32);
-    } else if (state.look === 'roll') {
-      drawRoll(pad, top, cw, ch, true);
-    } else if (state.look === 'fountain') {
-      drawFountain(pad, top, cw, ch);
-    } else if (state.look === 'pattern') {
-      drawPattern(pad, top, cw, ch);
-    } else if (state.look === 'geometric') {
-      drawGeometricLook(pad, top, cw, ch);
-    } else if (state.look === 'dither') {
-      drawDitherLook(pad, top, cw, ch);
-    } else if (state.look === 'depth') {
-      drawDepthLook(pad, top, cw, ch);
-    } else if (state.look === 'ascii') {
-      drawAsciiScene(pad, top, cw, ch, audio);
-    } else if (state.look === 'mesh') {
-      drawMeshScene(pad, top, cw, ch, audio);
-    } else if (state.look === 'glitch') {
-      drawGlitchScene(pad, top, cw, ch, audio);
-    } else if (window.PULSE_SCENES_026 && window.PULSE_SCENES_026.draw[state.look]) {
-      // v0.2.6: the 37 new scenes live in scenes-026.js and draw from the
-      // same audio bundle as the original 13.
-      drawScene026(state.look, pad, top, cw, ch, audio);
+    } else if (state.look === 'studio') {
+      drawStudio(pad, top, cw, ch, audio);
     } else {
-      const gap = 14, halfW = (cw - gap) / 2, halfH = (ch - gap) / 2;
-      drawPanel(pad, top, halfW, halfH, 'WAVEFORM');
-      drawScope(pad + 12, top + 30, halfW - 24, halfH - 44);
-      drawPanel(pad + halfW + gap, top, halfW, halfH, 'SPECTRUM');
-      drawSpectrum(pad + halfW + gap + 12, top + 30, halfW - 24, halfH - 44, false);
-      drawPanel(pad, top + halfH + gap, halfW, halfH, 'PIANO ROLL' + (state.midi ? ` — ${state.midiName}` : ''));
-      drawRoll(pad + 12, top + halfH + gap + 28, halfW - 24, halfH - 40, false);
-      drawPanel(pad + halfW + gap, top + halfH + gap, halfW, halfH, 'ORBIT');
-      drawOrbit(pad + halfW + gap + halfW / 2, top + halfH + gap + halfH / 2 + 6, Math.min(halfW, halfH) * 0.3);
+      drawSceneInto(state.look, pad, top, cw, ch, audio);
     }
     // The layer stack runs over the look, in order; mesh node handles last.
     applyPostLayers(audio);
@@ -2620,24 +3075,78 @@ document.querySelectorAll('#tabs .paper-tab').forEach((b) => {
    the song travelling SOURCE → DECODE → FFT → DETECTION → LAYERS → OUTPUT
    with live values at each stage. The rail reuses the live code panel and
    a live hex view of the Glitch working copy. */
-const mc = { blips: [], lastOnsetT: -1, lastChord: null, lastHexAt: 0, lastXrayAt: 0, fps: 0, lastFrameT: 0, hexBusy: false };
+const mc = { blips: [], rings: [], flash: 0, lastOnsetT: -1, lastChord: null, lastBassT: -10, lastVoxUp: false, lastStepKey: -1, lastBar: -1, lastSection: '', lastNoteIdx: -1, lastNoteAt: 0, lastHexAt: 0, lastXrayAt: 0, fps: 0, lastFrameT: 0, hexBusy: false };
 const mcMap = $('mc-map');
 const mcMapCtx = mcMap.getContext('2d');
-const MC_BLIP_COLORS = { bd: '#ff2e88', sd: '#38bdf8', hh: '#a3e635', chord: '#c084fc' };
-const MC_BLIP_LABELS = { bd: 'KICK', sd: 'SNARE', hh: 'HAT', chord: 'CHORD' };
-function mcPushBlip(type, strength) {
+// v0.2.7 item 6: every event type the engine already detects gets a home
+// on the map — kick/snare/hat/chord as before, plus bass (the 16-step bass
+// grid's hits), vocals (presence crossing up), beat + bar markers (the
+// step grid), drops (section flips) and the loudest note (chroma argmax).
+// Regions are the type's home turf; 'note' is placed by pitch instead.
+const MC_TYPES = {
+  bd:    { label: 'KICK',  region: [0.50, 0.68], color: '#ff2e88', shape: 'circle' },
+  sd:    { label: 'SNARE', region: [0.22, 0.36], color: '#38bdf8', shape: 'square' },
+  hh:    { label: 'HAT',   region: [0.78, 0.28], color: '#a3e635', shape: 'diamond' },
+  chord: { label: 'CHORD', region: [0.50, 0.42], color: '#c084fc', shape: 'circle' },
+  bass:  { label: 'BASS',  region: [0.50, 0.86], color: '#f59e0b', shape: 'diamond' },
+  vox:   { label: 'VOX',   region: [0.78, 0.62], color: '#ec4899', shape: 'circle' },
+  beat:  { label: 'BEAT',  region: [0.22, 0.14], color: '#94a3b8', shape: 'circle' },
+  bar:   { label: 'BAR',   region: [0.50, 0.50], color: '#e2e8f0', shape: 'ring' },
+  drop:  { label: 'DROP',  region: [0.50, 0.50], color: '#ef4444', shape: 'circle' },
+  note:  { label: 'NOTE',  region: null,         color: '#facc15', shape: 'diamond' },
+};
+const MC_TYPE_PARAM = { bd: 'showKick', sd: 'showSnare', hh: 'showHat', chord: 'showChord', bass: 'showBass', vox: 'showVox', beat: 'showBeat', bar: 'showBar', drop: 'showDrop', note: 'showNote' };
+const MC_TYPE_COLOR_PARAM = { bd: 'colorKick', sd: 'colorSnare', hh: 'colorHat', chord: 'colorChord', bass: 'colorBass', vox: 'colorVox' };
+const MC_THEMES = {
+  neon:   { bd: '#ff2e88', sd: '#38bdf8', hh: '#a3e635', chord: '#c084fc', bass: '#f59e0b', vox: '#ec4899', beat: '#94a3b8', bar: '#e2e8f0', drop: '#ef4444', note: '#facc15' },
+  ember:  { bd: '#ff6b35', sd: '#ffb703', hh: '#ffd166', chord: '#e85d75', bass: '#f48c06', vox: '#ff8fa3', beat: '#b08968', bar: '#fff3e4', drop: '#d00000', note: '#ffe66d' },
+  matrix: { bd: '#00ff41', sd: '#39ff14', hh: '#7fff00', chord: '#00e676', bass: '#aeea00', vox: '#64ffda', beat: '#69f0ae', bar: '#ccff90', drop: '#ff1744', note: '#eeff41' },
+  mono:   { bd: '#f8fafc', sd: '#cbd5e1', hh: '#94a3b8', chord: '#e2e8f0', bass: '#f1f5f9', vox: '#cbd5e1', beat: '#64748b', bar: '#f8fafc', drop: '#ffffff', note: '#e2e8f0' },
+};
+function mcMapVals() { return moduleVals('live-map'); }
+function mcTypeOn(type) {
+  const v = mcMapVals();
+  const key = MC_TYPE_PARAM[type];
+  return key ? v[key] !== false : true;
+}
+function mcColor(type) {
+  const v = mcMapVals();
+  const cKey = MC_TYPE_COLOR_PARAM[type];
+  if (cKey && v[cKey]) return v[cKey];
+  const theme = MC_THEMES[v.mapTheme] || MC_THEMES.neon;
+  return theme[type] || MC_TYPES[type].color;
+}
+function mcPushBlip(type, strength, opts) {
+  if (!mcTypeOn(type)) return;
   const w = mcMap.width, h = mcMap.height;
-  const region = { bd: [0.5, 0.68], sd: [0.22, 0.36], hh: [0.78, 0.28], chord: [0.5, 0.42] }[type] || [0.5, 0.5];
-  mc.blips.push({
-    type, s: strength || 0.8,
-    x: region[0] * w + (Math.random() - 0.5) * w * 0.16,
-    y: region[1] * h + (Math.random() - 0.5) * h * 0.14,
-    born: performance.now()
-  });
-  if (mc.blips.length > 90) mc.blips.shift();
+  const def = MC_TYPES[type] || {};
+  let x, y;
+  if (opts && opts.x != null && opts.y != null) { x = opts.x; y = opts.y; }
+  else if (def.region) {
+    x = def.region[0] * w + (Math.random() - 0.5) * w * 0.16;
+    y = def.region[1] * h + (Math.random() - 0.5) * h * 0.14;
+  } else return;
+  const b = {
+    type, s: strength || 0.8, x, y, born: performance.now(),
+    label: (opts && opts.label) || def.label || type.toUpperCase(),
+  };
+  mc.blips.push(b);
+  const max = Number(mcMapVals().maxBlips) || 90;
+  if (mc.blips.length > max) mc.blips.splice(0, mc.blips.length - max);
+  // A kick lands hard: flash the whole map and send out a shockwave.
+  if (type === 'bd') {
+    mc.flash = 1;
+    mc.rings.push({ x: b.x, y: b.y, born: b.born, maxR: Math.min(w, h) * 0.5, dur: 700 });
+  }
+  return b;
+}
+function mcPushRing(x, y, maxR, dur) {
+  mc.rings.push({ x, y, born: performance.now(), maxR, dur: dur || 900 });
+  if (mc.rings.length > 24) mc.rings.shift();
 }
 function mcConsumeOnsets() {
   if (!analysis) return;
+  const now = performance.now();
   for (const o of analysis.onsets) {
     if (o.t <= mc.lastOnsetT) continue;
     mc.lastOnsetT = o.t;
@@ -2647,40 +3156,145 @@ function mcConsumeOnsets() {
     mc.lastChord = analysis.chord.name;
     mcPushBlip('chord', 1);
   }
+  // Bass: the 16-step bass grid's hits land in the bottom region.
+  if (analysis.v && analysis.v.bass && analysis.v.bass.lastHit.t > mc.lastBassT) {
+    mc.lastBassT = analysis.v.bass.lastHit.t;
+    mcPushBlip('bass', 0.9);
+  }
+  // Vocals: presence crossing 0.5 upward (a sustained pad has energy but
+  // no flux, so it does not read as a voice — see analysis.js).
+  const voxUp = !!(analysis.instruments && analysis.instruments.vocals > 0.5);
+  if (voxUp && !mc.lastVoxUp) mcPushBlip('vox', analysis.instruments.vocals);
+  mc.lastVoxUp = voxUp;
+  // Beat + bar: the step grid — every 4th step is a beat, a new bar is a ring.
+  const stepKey = analysis.bar * 16 + analysis.step;
+  if (stepKey !== mc.lastStepKey) {
+    mc.lastStepKey = stepKey;
+    if (analysis.step % 4 === 0) {
+      mcPushBlip('beat', 0.5);
+      mcPushRing(mcMap.width * 0.5, mcMap.height * 0.5, Math.min(mcMap.width, mcMap.height) * 0.42, 600);
+    }
+    if (analysis.bar !== mc.lastBar) {
+      mc.lastBar = analysis.bar;
+      mcPushBlip('bar', 1);
+      mcPushRing(mcMap.width * 0.5, mcMap.height * 0.5, Math.min(mcMap.width, mcMap.height) * 0.48, 1000);
+    }
+  }
+  // Drop: the section flips to 'drop' — big flash, centre stage.
+  if (analysis.section && analysis.section !== mc.lastSection) {
+    if (analysis.section === 'drop') { mcPushBlip('drop', 1); mc.flash = 1; }
+    mc.lastSection = analysis.section;
+  }
+  // Note: the loudest pitch class (chroma argmax), gated so a flickering
+  // frame can't spam the map — clear pitch, 400 ms apart minimum.
+  if (analysis.chromaSum > 0.05) {
+    let ni = 0;
+    for (let i = 1; i < 12; i++) if (analysis.chroma[i] > analysis.chroma[ni]) ni = i;
+    if (ni !== mc.lastNoteIdx && analysis.chroma[ni] > 0.25 && now - mc.lastNoteAt > 400) {
+      mc.lastNoteIdx = ni; mc.lastNoteAt = now;
+      mcPushBlip('note', 0.7, { x: ((ni + 0.5) / 12) * mcMap.width, y: mcMap.height * 0.10, label: TA_NOTES[ni] });
+    }
+  }
+}
+function mcDrawShape(g, shape, x, y, r) {
+  g.beginPath();
+  if (shape === 'square') g.rect(x - r, y - r, r * 2, r * 2);
+  else if (shape === 'diamond') { g.moveTo(x, y - r); g.lineTo(x + r, y); g.lineTo(x, y + r); g.lineTo(x - r, y); g.closePath(); }
+  else g.arc(x, y, r, 0, Math.PI * 2);
+  g.fill();
 }
 function drawMcMap() {
   const w = mcMap.width, h = mcMap.height;
   if (!w || !h) return;
   const g = mcMapCtx;
   g.fillStyle = '#05070f'; g.fillRect(0, 0, w, h);
+  const mapVals = mcMapVals();
+  // --- grid: lines, dots, concentric rings, or bare ---
+  const gridStyle = mapVals.grid || 'grid';
+  const dens = Math.max(2, Math.min(16, Number(mapVals.gridDensity) || 8));
   g.strokeStyle = 'rgba(148,163,184,0.12)'; g.lineWidth = 1;
-  for (let i = 1; i < 8; i++) { g.beginPath(); g.moveTo((w / 8) * i, 0); g.lineTo((w / 8) * i, h); g.stroke(); }
-  for (let i = 1; i < 5; i++) { g.beginPath(); g.moveTo(0, (h / 5) * i); g.lineTo(w, (h / 5) * i); g.stroke(); }
+  if (gridStyle === 'grid') {
+    for (let i = 1; i < dens; i++) { g.beginPath(); g.moveTo((w / dens) * i, 0); g.lineTo((w / dens) * i, h); g.stroke(); }
+    for (let i = 1; i < 5; i++) { g.beginPath(); g.moveTo(0, (h / 5) * i); g.lineTo(w, (h / 5) * i); g.stroke(); }
+  } else if (gridStyle === 'dots') {
+    g.fillStyle = 'rgba(148,163,184,0.25)';
+    for (let i = 1; i < dens; i++) for (let j = 1; j < 5; j++) { g.beginPath(); g.arc((w / dens) * i, (h / 5) * j, 1.5, 0, Math.PI * 2); g.fill(); }
+  } else if (gridStyle === 'rings') {
+    const cx = w / 2, cy = h / 2, maxR = Math.min(w, h) / 2;
+    for (let i = 1; i <= 4; i++) { g.beginPath(); g.arc(cx, cy, (maxR / 4) * i, 0, Math.PI * 2); g.stroke(); }
+    g.beginPath(); g.moveTo(cx, 0); g.lineTo(cx, h); g.moveTo(0, cy); g.lineTo(w, cy); g.stroke();
+  }
   const sx = w * 0.5, sy = h * 0.5;
   g.fillStyle = '#38bdf8';
   g.beginPath(); g.arc(sx, sy, 4, 0, Math.PI * 2); g.fill();
   g.font = '700 10px "Paper Mono", monospace'; g.fillStyle = '#64748b';
   g.fillText(state.sysAudio ? 'SOURCE: SYSTEM AUDIO' : (state.trackName ? 'SOURCE: ' + state.trackName : 'SOURCE: —'), 8, 14);
   const now = performance.now();
-  // v0.2.6: the live map is a module — blip size + trail come from its editor.
-  const mapVals = moduleVals('live-map');
+  // --- kick flash: the whole map flares on a kick, then decays ---
+  if (mc.flash > 0.02) {
+    g.globalAlpha = mc.flash * 0.16;
+    g.fillStyle = mcColor('bd');
+    g.fillRect(0, 0, w, h);
+    g.globalAlpha = 1;
+    mc.flash *= 0.88;
+  }
+  // --- beat pulse rings: expanding circles from the centre / shockwaves ---
+  mc.rings = mc.rings.filter((r) => now - r.born < r.dur);
+  for (const r of mc.rings) {
+    const p = (now - r.born) / r.dur;
+    g.globalAlpha = (1 - p) * 0.5;
+    g.strokeStyle = '#e2e8f0'; g.lineWidth = 2;
+    g.beginPath(); g.arc(r.x, r.y, Math.max(2, p * r.maxR), 0, Math.PI * 2); g.stroke();
+    g.globalAlpha = 1;
+  }
   const trailMs = (Number(mapVals.trail) || 2.6) * 1000;
   const blipScale = Number(mapVals.blipSize) || 1;
   mc.blips = mc.blips.filter((b) => now - b.born < trailMs);
+  // --- connecting trails: a line through the blips in time order ---
+  if (mapVals.connect !== false && mc.blips.length > 1) {
+    const ordered = [...mc.blips].sort((a, b) => a.born - b.born).slice(-10);
+    g.lineWidth = 1;
+    for (let i = 1; i < ordered.length; i++) {
+      const a = ordered[i - 1], b = ordered[i];
+      const age = (now - b.born) / trailMs;
+      g.globalAlpha = (1 - age) * 0.45;
+      g.strokeStyle = mcColor(b.type);
+      g.beginPath(); g.moveTo(a.x, a.y); g.lineTo(b.x, b.y); g.stroke();
+    }
+    g.globalAlpha = 1;
+  }
+  const shapeMode = mapVals.shape || 'mixed';
+  const trailStyle = mapVals.trailStyle || 'fade';
   for (const b of mc.blips) {
     const age = (now - b.born) / trailMs;
     const a = 1 - age;
-    const color = MC_BLIP_COLORS[b.type] || '#fff';
+    const color = mcColor(b.type);
+    const shape = shapeMode === 'mixed' ? (MC_TYPES[b.type] ? MC_TYPES[b.type].shape : 'circle') : shapeMode;
     g.strokeStyle = color; g.globalAlpha = a * 0.35; g.lineWidth = 1;
     g.beginPath(); g.moveTo(sx, sy); g.lineTo(b.x, b.y); g.stroke();
-    const r = (4 + age * 26) * blipScale;
-    g.globalAlpha = a * 0.8;
-    g.beginPath(); g.arc(b.x, b.y, r, 0, Math.PI * 2); g.stroke();
+    if (shape === 'ring' || trailStyle === 'ring') {
+      // Ring-only blips: just the expanding circle + label, no dot.
+      const r = (4 + age * 26) * blipScale;
+      g.globalAlpha = a * 0.8;
+      g.beginPath(); g.arc(b.x, b.y, r, 0, Math.PI * 2); g.stroke();
+    } else {
+      const r = (4 + age * 26) * blipScale;
+      g.globalAlpha = a * 0.8;
+      g.beginPath(); g.arc(b.x, b.y, r, 0, Math.PI * 2); g.stroke();
+      if (trailStyle === 'comet') {
+        // Comet: a short fading tail pointing back toward the centre.
+        g.globalAlpha = a * 0.5;
+        const dx = sx - b.x, dy = sy - b.y, len = Math.hypot(dx, dy) || 1;
+        g.beginPath(); g.moveTo(b.x, b.y); g.lineTo(b.x + (dx / len) * 34 * blipScale, b.y + (dy / len) * 34 * blipScale); g.stroke();
+      }
+      g.globalAlpha = a;
+      g.fillStyle = color;
+      mcDrawShape(g, shape, b.x, b.y, (3 + b.s * 3) * blipScale);
+    }
     g.globalAlpha = a;
     g.fillStyle = color;
-    g.beginPath(); g.arc(b.x, b.y, (3 + b.s * 3) * blipScale, 0, Math.PI * 2); g.fill();
     g.font = '700 10px "Paper Mono", monospace';
-    g.fillText(MC_BLIP_LABELS[b.type] || b.type.toUpperCase(), b.x + 8, b.y + 3);
+    g.fillText(b.label || (MC_TYPES[b.type] ? MC_TYPES[b.type].label : b.type.toUpperCase()), b.x + 8, b.y + 3);
     g.globalAlpha = 1;
   }
   $('mc-map-count').textContent = mc.blips.length
@@ -2778,6 +3392,27 @@ const glitch = {
   history: [], previewKind: null, previewEl: null, previewLoaded: false,
   viewBytes: null, origBytes: null
 };
+/* v0.2.7 item 3 — Glitch auto-start. The glitch effect arms itself the
+   moment music starts: AUDIO CORRUPT is checked, and if the Glitch tab
+   has no working copy yet, the playing track becomes it (a temp copy —
+   the original is never touched). A file the user loaded by hand is
+   never clobbered. Unchecking AUDIO CORRUPT turns auto-start off and
+   that choice persists (cfg.glitchAuto); checking it again turns it
+   back on. Pausing needs no stop hook — audioCorruptTick already gates
+   on state.playing, so it rests on pause and resumes on play. */
+let glitchAuto = true;
+async function maybeAutoGlitchLoad() {
+  if (!glitchAuto || glitch.tempPath || glitch.autoLoading) return;
+  if (!state.trackPath || glitch.originalPath === state.trackPath) return;
+  glitch.autoLoading = true;
+  try { await openGlitchFile(state.trackPath); } catch (_) {}
+  glitch.autoLoading = false;
+}
+function maybeAutoGlitch() {
+  if (!glitchAuto) return;
+  $('glitch-audio-corrupt').checked = true;
+  maybeAutoGlitchLoad();
+}
 function glitchLog(msg) { $('glitch-log').textContent = msg; }
 async function openGlitchFile(filePath) {
   let target = filePath ? { path: filePath, name: filePath.split(/[\\/]/).pop() } : null;
@@ -2985,6 +3620,12 @@ async function restoreSnapshot(i) {
   reloadGlitchPreview();
 }
 $('btn-glitch-open').addEventListener('click', () => openGlitchFile());
+// v0.2.7 item 3: the AUDIO CORRUPT checkbox IS the auto-start switch —
+// unchecking it turns auto-start off (persisted), checking it re-arms it.
+$('glitch-audio-corrupt').addEventListener('change', (e) => {
+  glitchAuto = e.target.checked;
+  if (window.pulse && window.pulse.setConfig) window.pulse.setConfig({ glitchAuto }).catch(() => {});
+});
 $('btn-glitch-apply').addEventListener('click', () => applyCorruption(false));
 $('btn-glitch-all').addEventListener('click', () => applyCorruption(true));
 $('btn-glitch-reset').addEventListener('click', async () => {
@@ -4487,6 +5128,21 @@ window.pulse.getConfig().then((cfg) => {
   // v0.2.6: panel layout (drag order, sizes, hidden panels) restores here.
   if (window.PulseLayout) window.PulseLayout.init(cfg);
   if (cfg.modules) applyModuleSettings(cfg.modules);
+  // v0.2.7 item 3: auto-start off only when the user explicitly turned
+  // it off (unchecking AUDIO CORRUPT); default is on.
+  if (cfg.glitchAuto === false) { glitchAuto = false; $('glitch-audio-corrupt').checked = false; }
+  // v0.2.7 item 5: the Visualize spectrum/scope theme persists per
+  // visualizer — a saved bundle wins; a bare name re-applies the preset.
+  if (cfg.vizThemes && cfg.vizThemes.sceneViz) {
+    const sv = cfg.vizThemes.sceneViz;
+    if (typeof sv === 'string' && SPECTRUM_THEMES[sv]) {
+      state.sceneVizTheme = { ...SPECTRUM_THEMES[sv], name: sv };
+    } else if (sv && typeof sv === 'object' && SPECTRUM_THEMES[sv.name]) {
+      state.sceneVizTheme = { ...SPECTRUM_THEMES[sv.name], ...sv };
+    }
+    const sel = $('spectrum-scene-theme');
+    if (sel && state.sceneVizTheme.name) sel.value = state.sceneVizTheme.name;
+  }
 }).catch(() => {});
 
 /* ---------- pop-out panels: live code editor + hex editor ----------
@@ -5436,6 +6092,369 @@ async function smokeTest() {
     res.afterResetHidden = $('lyrics-pane').classList.contains('layout-hidden');
     res.afterResetOrder = $('library-pane').style.order;
     if (res.savedOrder !== 2 || res.savedHidden !== true || !res.hiddenNow || res.afterResetHidden || res.afterResetOrder) R.ok = false;
+    return res;
+  });
+  await step('drag-pointer', async () => {
+    // v0.2.7 items 1+4: a pointer drag through the same window-level
+    // listeners the real mouse uses must move the panel AND its resize
+    // grip together (the 0.2.6 bug), and must be able to cross containers.
+    // Synthetic PointerEvents work here because setPointerCapture is
+    // best-effort (try/catch) — a real mouse was verified separately
+    // with the CDP repro (/tmp/pulse-drag-repro.js).
+    setTab('play');
+    window.PulseLayout.resetLayout();
+    await new Promise((r) => setTimeout(r, 200));
+    const rect = (el) => { const b = el.getBoundingClientRect(); return { x: Math.round(b.x), y: Math.round(b.y), w: Math.round(b.width), h: Math.round(b.height) }; };
+    const pe = (type, x, y, target) => target.dispatchEvent(new PointerEvent(type, { pointerId: 7, button: 0, buttons: type === 'pointerup' ? 0 : 1, clientX: x, clientY: y, bubbles: true, cancelable: true, isPrimary: true }));
+    const drag = async (grip, from, to) => {
+      pe('pointerdown', from.x, from.y, grip);
+      const steps = 12;
+      for (let i = 1; i <= steps; i++) {
+        pe('pointermove', from.x + (to.x - from.x) * i / steps, from.y + (to.y - from.y) * i / steps, window);
+        await new Promise((r) => setTimeout(r, 16));
+      }
+      pe('pointerup', to.x, to.y, window);
+      await new Promise((r) => setTimeout(r, 120));
+    };
+    // (a) Docked reorder: library-pane one slot to the right.
+    const lib = $('library-pane');
+    const lg = rect(lib.querySelector('.drag-grip'));
+    const before = { panel: rect(lib), grip: rect(lib.querySelector('.resize-grip')) };
+    await drag(lib.querySelector('.drag-grip'), { x: lg.x + lg.w / 2, y: lg.y + lg.h / 2 }, { x: lg.x + lg.w / 2 + 422, y: lg.y + lg.h / 2 });
+    const after = { panel: rect(lib), grip: rect(lib.querySelector('.resize-grip')) };
+    const res = {
+      libPanelDx: after.panel.x - before.panel.x, libGripDx: after.grip.x - before.grip.x,
+      libPanelDy: after.panel.y - before.panel.y, libGripDy: after.grip.y - before.grip.y,
+    };
+    res.gripFollows = Math.abs(res.libPanelDx - res.libGripDx) <= 2 && Math.abs(res.libPanelDy - res.libGripDy) <= 2;
+    // (b) Cross-container: the live map out of Mission Control to the
+    // top of the Play tab. Scroll the GRIP into view (block:'center'):
+    // scrollIntoView on the panel with block:'end' hides the grip above
+    // the viewport when the panel is taller than the viewport — the
+    // smoke run's grip sat at y=-38, so the drag ran DOWN through the
+    // parent's box and never detached. Centring the grip puts it
+    // mid-screen whatever the window height is.
+    const mcEl = $('mc-main');
+    mcEl.querySelector('.drag-grip').scrollIntoView({ block: 'center' });
+    await new Promise((r) => setTimeout(r, 200));
+    const pmcR = document.querySelector('#play-mc').getBoundingClientRect();
+    const mg = rect(mcEl.querySelector('.drag-grip'));
+    const mcBefore = { parent: mcEl.parentElement.id, free: mcEl.dataset.free || null, pmcTop: Math.round(pmcR.top), pmcBottom: Math.round(pmcR.bottom), scrollTop: document.querySelector('#tab-play').scrollTop, gripY: mg.y };
+    // Trace the drag move-by-move (a smoke-only diagnostic: the
+    // standalone CDP repro passes, so if this fails the trace shows
+    // whether the drag never started, never detached, or re-docked).
+    const trace = [];
+    const gripEl = mcEl.querySelector('.drag-grip');
+    const fromB = { x: mg.x + mg.w / 2, y: mg.y + mg.h / 2 }, toB = { x: mg.x + 10, y: 70 };
+    pe('pointerdown', fromB.x, fromB.y, gripEl);
+    trace.push('down dragging=' + mcEl.classList.contains('layout-dragging'));
+    for (let i = 1; i <= 12; i++) {
+      pe('pointermove', fromB.x + (toB.x - fromB.x) * i / 12, fromB.y + (toB.y - fromB.y) * i / 12, window);
+      await new Promise((r) => setTimeout(r, 16));
+      trace.push('move' + i + ' y=' + Math.round(fromB.y + (toB.y - fromB.y) * i / 12) + ' free=' + (mcEl.dataset.free || null) + ' parent=' + mcEl.parentElement.id);
+    }
+    pe('pointerup', toB.x, toB.y, window);
+    await new Promise((r) => setTimeout(r, 120));
+    const gripAfter = rect(mcEl.querySelector('.resize-grip')), panelAfter = rect(mcEl);
+    const mcAfter = {
+      parent: mcEl.parentElement.id, free: mcEl.dataset.free || null,
+      gripInPanel: gripAfter.x >= panelAfter.x - 2 && gripAfter.y >= panelAfter.y - 2
+        && gripAfter.x + gripAfter.w <= panelAfter.x + panelAfter.w + 2
+        && gripAfter.y + gripAfter.h <= panelAfter.y + panelAfter.h + 2,
+      heightSane: panelAfter.h > 100,
+    };
+    res.mcBefore = mcBefore; res.mcAfter = mcAfter; res.trace = trace;
+    res.crossContainer = mcAfter.parent !== 'play-mc' || mcAfter.free === '1';
+    window.PulseLayout.resetLayout();
+    if (!res.gripFollows || !res.crossContainer || !mcAfter.gripInPanel || !mcAfter.heightSane) R.ok = false;
+    return res;
+  });
+  await step('studio-swap', async () => {
+    // v0.2.7 item 2: swap a Studio quadrant for another visualizer —
+    // the choice persists in pulse-config.json, and right-clicking a
+    // quadrant opens the swap menu.
+    setTab('visualize');
+    setLook('studio');
+    await new Promise((r) => setTimeout(r, 400));
+    const before = [...state.studioSlots];
+    const res = { slotsBefore: before, rectsDrawn: state.studioRects.length };
+    state.studioSlots[0] = 'plasma';
+    persistStudioSlots();
+    await new Promise((r) => setTimeout(r, 300));
+    const cfg = await window.pulse.getConfig();
+    res.persisted = cfg && cfg.studioSlots;
+    // Right-click the first quadrant: the swap menu must open with the
+    // scene list; picking one swaps the slot.
+    const r0 = state.studioRects[0];
+    if (r0) {
+      const cr = canvas.getBoundingClientRect();
+      const cx = cr.left + ((r0.x + r0.w / 2) * cr.width) / canvas.width;
+      const cy = cr.top + ((r0.y + r0.h / 2) * cr.height) / canvas.height;
+      canvas.dispatchEvent(new MouseEvent('contextmenu', { clientX: cx, clientY: cy, bubbles: true, cancelable: true }));
+      await new Promise((r) => setTimeout(r, 150));
+      res.menuVisible = !$('module-menu').hidden;
+      res.menuListsScenes = $('module-menu').textContent.includes('Kaleidoscope');
+      const btn = [...document.querySelectorAll('#module-menu .paper-menu-item')].find((b) => b.textContent.includes('Kaleidoscope'));
+      if (btn) btn.click();
+      await new Promise((r) => setTimeout(r, 150));
+      res.slotAfterMenuPick = state.studioSlots[0];
+    }
+    state.studioSlots = before;
+    persistStudioSlots();
+    if (!res.persisted || res.persisted[0] !== 'plasma' || !res.menuVisible || !res.menuListsScenes || res.slotAfterMenuPick !== 'kaleido') R.ok = false;
+    return res;
+  });
+  await step('spectrum-theme', async () => {
+    // v0.2.7 item 5: Mousiki-style themes for the spectrum analyzer.
+    // Picking a theme applies its whole bundle (style + colours +
+    // fluidity / fall / viscosity) and persists per visualizer; the
+    // ASCII theme must actually DRAW in its solid colour, and tweaking
+    // a slider after picking a preset marks the theme Custom.
+    setTab('play');
+    await loadAudioFile('/tmp/pulse-test/tone.wav', 'tone.wav'); // auto-plays
+    await new Promise((r) => setTimeout(r, 1200));
+    const res = {};
+    // Play spectrum → ASCII: the bundle applies, and it persists.
+    setModuleParam('spectrum', 'theme', 'ascii');
+    const v = moduleVals('spectrum');
+    res.theme = v.theme; res.fluidity = v.fluidity; res.degradation = v.degradation;
+    res.colorLeft = v.colorLeft;
+    await new Promise((r) => setTimeout(r, 400));
+    const cfg = await window.pulse.getConfig();
+    res.persistedTheme = cfg && cfg.modules && cfg.modules.spectrum && cfg.modules.spectrum.theme;
+    res.persistedFluidity = cfg && cfg.modules && cfg.modules.spectrum && cfg.modules.spectrum.fluidity;
+    // Render the Play spectrum 10 frames (the spring needs frames to
+    // rise) and count pixels in the ASCII theme's amber — the bars
+    // must actually draw as amber characters, not the old gradient.
+    const countColor = (hex) => {
+      const c = $('play-spectrum');
+      const g = c.getContext('2d');
+      const d = g.getImageData(0, 0, c.width, c.height).data;
+      const [r0, g0, b0] = hexRgb(hex);
+      let n = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        if (Math.abs(d[i] - r0) < 40 && Math.abs(d[i + 1] - g0) < 40 && Math.abs(d[i + 2] - b0) < 40) n++;
+      }
+      return n;
+    };
+    window.__vizDt = 1 / 60;
+    for (let k = 0; k < 10; k++) drawMiniSpectrum();
+    const totalPx = $('play-spectrum').width * $('play-spectrum').height;
+    res.amberPxAscii = countColor('#fbbf24');
+    res.amberFracAscii = Math.round((res.amberPxAscii / totalPx) * 1000) / 10;
+    // Back to Mousiki: the amber must (mostly) go away — the gradient
+    // returns — and the bundle changes with it.
+    setModuleParam('spectrum', 'theme', 'mousiki');
+    for (let k = 0; k < 10; k++) drawMiniSpectrum();
+    res.amberPxMousiki = countColor('#fbbf24');
+    res.themeAfter = moduleVals('spectrum').theme;
+    res.fluidityAfter = moduleVals('spectrum').fluidity;
+    // Tweaking a slider marks it Custom.
+    setModuleParam('spectrum', 'fluidity', 7);
+    res.themeAfterTweak = moduleVals('spectrum').theme;
+    // The Visualize spectrum/scope theme is its own slot, persisted
+    // separately from the Play one.
+    const sel = $('spectrum-scene-theme');
+    sel.value = 'vu';
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 400));
+    const cfg2 = await window.pulse.getConfig();
+    res.sceneTheme = state.sceneVizTheme.name;
+    res.scenePersisted = cfg2 && cfg2.vizThemes && cfg2.vizThemes.sceneViz && cfg2.vizThemes.sceneViz.name;
+    window.__vizDt = null;
+    // Restore the default so the next run (and Austin) start on Mousiki,
+    // and close the module dialog the theme picks opened.
+    setModuleParam('spectrum', 'theme', 'mousiki');
+    sel.value = 'mousiki';
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 200));
+    if ($('module-dialog').open) $('module-dialog').close();
+    if (res.theme !== 'ascii' || res.fluidity !== 5 || res.degradation !== 5 || res.colorLeft !== '#fbbf24'
+      || res.persistedTheme !== 'ascii' || res.persistedFluidity !== 5
+      || res.amberFracAscii < 0.2 || res.amberPxMousiki >= res.amberPxAscii
+      || res.themeAfter !== 'mousiki' || res.fluidityAfter !== 10
+      || res.themeAfterTweak !== 'custom'
+      || res.sceneTheme !== 'vu' || res.scenePersisted !== 'vu') R.ok = false;
+    return res;
+  });
+  await step('glitch-autostart', async () => {
+    // v0.2.7 item 3: pressing play auto-loads the track as the glitch
+    // working copy and arms AUDIO CORRUPT; a kick then corrupts bytes.
+    // Clear any working copy an earlier step loaded, so the auto-load
+    // is what fills it (a hand-loaded file is never clobbered — that
+    // path is covered by the guard in maybeAutoGlitchLoad).
+    setTab('play');
+    glitchAuto = true;
+    glitch.tempPath = ''; glitch.originalPath = ''; glitch.name = '';
+    $('glitch-audio-corrupt').checked = true;
+    await loadAudioFile('/tmp/pulse-test/tone.wav', 'tone.wav');
+    await new Promise((r) => setTimeout(r, 300));
+    if (!state.playing) await play();
+    await new Promise((r) => setTimeout(r, 1500));
+    const res = {
+      armed: $('glitch-audio-corrupt').checked,
+      tempPath: glitch.tempPath,
+      originalIsTrack: glitch.originalPath === state.trackPath,
+    };
+    // Force one kick through the corrupt path and prove bytes change
+    // across the whole working copy (the range is random, so a 4 KB
+    // window could miss it — read the full file).
+    const op = document.querySelector('.glitch-op');
+    if (op) op.checked = true;
+    const readAll = async (p) => {
+      const size = (await window.pulse.glitchRead(p, 0, 1)).size;
+      const out = new Uint8Array(size);
+      for (let off = 0; off < size; off += 65536) {
+        const chunk = await window.pulse.glitchRead(p, off, Math.min(65536, size - off));
+        out.set(chunk.bytes, off);
+      }
+      return out;
+    };
+    const before = await readAll(glitch.tempPath);
+    analysis.lastKick = 999; audioCorruptLastKick = -10; audioCorruptLast = 0;
+    await audioCorruptTick();
+    await new Promise((r) => setTimeout(r, 300));
+    const after = await readAll(glitch.tempPath);
+    let diffs = 0;
+    for (let i = 0; i < before.length; i++) if (before[i] !== after[i]) diffs++;
+    res.bytesChangedOnKick = diffs;
+    pause();
+    if (!res.armed || !res.tempPath || !res.originalIsTrack || diffs === 0) R.ok = false;
+    return res;
+  });
+  await step('live-map-events', async () => {
+    // v0.2.7 item 6: the new event types land on the map from the
+    // engine's own readouts — bass grid hits, vocals crossing up,
+    // section flips, chroma notes — plus beat/bar markers while the
+    // 120 BPM tone plays live.
+    setTab('play');
+    if (!analysis) return { noAnalysis: true };
+    const seen = () => new Set(mc.blips.map((b) => b.type));
+    // Synthetic events first (deterministic): drive the consumers by hand.
+    if (analysis.v && analysis.v.bass) { analysis.v.bass.lastHit.t = 999; mc.lastBassT = -10; }
+    analysis.instruments.vocals = 0.9; mc.lastVoxUp = false;
+    analysis.section = 'drop'; mc.lastSection = '';
+    analysis.chromaSum = 1; if (analysis.chroma) { analysis.chroma.fill(0); analysis.chroma[3] = 0.9; }
+    mc.lastNoteIdx = -1; mc.lastNoteAt = 0;
+    mcConsumeOnsets();
+    const res = { syntheticTypes: [...seen()] };
+    // Live: the tone locks the BPM, so beat + bar markers must appear.
+    await loadAudioFile('/tmp/pulse-test/tone.wav', 'tone.wav');
+    await new Promise((r) => setTimeout(r, 300));
+    if (!state.playing) await play();
+    await new Promise((r) => setTimeout(r, 4000));
+    updateMissionControl();
+    res.liveTypes = [...seen()];
+    res.liveCount = mc.blips.length;
+    res.bpmLocked = analysis && analysis.bpmLocked;
+    pause();
+    const need = ['bass', 'vox', 'drop', 'note'];
+    if (!need.every((t) => res.syntheticTypes.includes(t))
+      || (!res.liveTypes.includes('beat') && !res.liveTypes.includes('bar'))) R.ok = false;
+    return res;
+  });
+  await step('scenes-reactive', async () => {
+    // v0.2.7 item 7: EVERY scene must visibly change with the audio
+    // level. Each scene is drawn three times at the SAME clock time (t
+    // fixed, so time drift can't fake a pass): twice quiet, once loud.
+    // The quiet-vs-quiet difference is the scene's own noise (random
+    // particles advancing one call); the audio difference is measured
+    // over the adjacent step (q2→loud). A purely time-driven scene
+    // scores audio ≈ 0 and fails; a speed-driven scene (tunnel) still
+    // scores, because its ring positions are f(t × speed) — the speed
+    // itself is the audio term, so the same t lands the rings in
+    // different places when the BPM/level change. Full-frame
+    // changed-pixel count (any channel moved > 12): the earlier sparse
+    // sample used a 1024 px stride whose x-columns (0, 256, 512, 768,
+    // 1024 on a 1280 canvas) systematically missed whole columns of
+    // shapes — pattern measured zero while visibly growing 60%. The
+    // render loop is kept off the canvas by staying on the Play tab
+    // while drawing by hand.
+    // Each sample is 10 draws, not 1: the spectrum scenes run Mousiki's
+    // spring-damper (v0.2.7 item 5), which needs several frames to close
+    // the gap toward the audio — one loud frame barely moves a bar.
+    // The clock is driven (window.__vizDt = 1/60) so the springs advance
+    // the same amount in the test as in real playback. Noise and audio
+    // get the SAME number of draws, so a time-only scene still scores
+    // audio ≈ noise and fails.
+    setTab('play');
+    await new Promise((r) => setTimeout(r, 200));
+    const w = canvas.width, h = canvas.height;
+    const pad = 26, top = 56, cw = w - pad * 2, ch = h - top - 56;
+    // Full-frame changed-pixel count: the earlier sparse sample used a
+    // 1024 px stride whose x-columns (0, 256, 512, 768, 1024 on a 1280
+    // canvas) systematically missed whole columns of shapes — pattern
+    // measured zero while visibly growing 60%. Counting every pixel
+    // with any channel moved > 12 has no lattice gaps.
+    const sample = () => ctx.getImageData(0, 0, w, h).data;
+    const countChanged = (a, b) => {
+      let n = 0;
+      for (let i = 0; i < a.length; i += 4) {
+        if (Math.abs(a[i] - b[i]) > 12 || Math.abs(a[i + 1] - b[i + 1]) > 12 || Math.abs(a[i + 2] - b[i + 2]) > 12) n++;
+      }
+      return n;
+    };
+    const setAudioState = (loud, bpOverride) => {
+      if (analysis) {
+        analysis.level = loud ? 1 : 0;
+        analysis.kickPulse = loud ? 1 : 0;
+        analysis.beat = loud ? 1 : 0;
+        analysis.beatPhase = bpOverride != null ? bpOverride : (loud ? 0.5 : -1);
+        analysis.barPhase = loud ? 0.5 : -1;
+        analysis.bpmLocked = !!loud;
+        analysis.bpm = loud ? 120 : 0;
+        analysis.centroid = loud ? 3000 : 0;
+        analysis.flux = loud ? 0.8 : 0;
+        analysis.rms = loud ? 0.5 : 0;
+        analysis.chromaSum = loud ? 1 : 0;
+        analysis.chord = loud ? { name: 'C' } : null;
+        if (analysis.bands32) analysis.bands32.fill(loud ? 0.8 : 0);
+        if (analysis.bands64) analysis.bands64.fill(loud ? 0.8 : 0);
+        if (analysis.chroma) { analysis.chroma.fill(0); if (loud) analysis.chroma[0] = 0.9; }
+        if (analysis.instruments) for (const k of Object.keys(analysis.instruments)) analysis.instruments[k] = loud ? 0.8 : 0;
+      }
+      state.beat = loud ? 1 : 0;
+      state.smoothLow = loud ? 1 : 0; state.smoothMid = loud ? 0.7 : 0; state.smoothHigh = loud ? 0.5 : 0;
+      // mousikiBands() reads the FLOAT dB spectrum (freqDb), not the
+      // byte array — filling only freqData left every Mousiki-driven
+      // scene deaf in the first version of this test.
+      freqData.fill(loud ? 200 : 0);
+      freqDb.fill(loud ? -25 : -100);
+      for (let i = 0; i < waveData.length; i++) waveData[i] = loud ? Math.round(128 + 100 * Math.sin(i / 10)) : 128;
+    };
+    const drawAt = (id, loud, t, bpOverride) => {
+      // 10 draws per sample — the spectrum springs need several frames
+      // to rise toward the audio (see the comment above).
+      for (let k = 0; k < 10; k++) {
+        setAudioState(loud, bpOverride);
+        ctx.fillStyle = bgGradient(w, h); ctx.fillRect(0, 0, w, h);
+        drawSceneInto(id, pad, top, cw, ch, { kick: loud ? 1 : 0, bass: loud ? 1 : 0, level: loud ? 1 : 0, t, centroid: loud ? 3000 : 0, bands32: analysis ? analysis.bands32 : new Float32Array(32) });
+      }
+    };
+    const res = { scenes: {}, failures: [] };
+    window.__vizDt = 1 / 60; // drive the spectrum springs at 60 fps
+    for (const id of SCENE_ORDER) {
+      if (id === 'studio') continue;
+      try {
+        drawAt(id, false, 100.0); const q1 = sample();
+        drawAt(id, false, 100.0); const q2 = sample();
+        // Slitscan only pushes a new column on a beat-phase WRAP (0.9 →
+        // 0.1): prime it unsampled so the sampled loud draw lands one.
+        if (id === 'slitscan') drawAt(id, true, 100.0, 0.9);
+        drawAt(id, true, 100.0, id === 'slitscan' ? 0.1 : undefined);
+        const l = sample();
+        const noiseChanged = countChanged(q1, q2);
+        const audioChanged = countChanged(q2, l);
+        // Pass: the loud frame changes a real number of pixels, and
+        // clearly more than the scene's own frame-to-frame noise.
+        const pass = audioChanged > 200 && audioChanged > noiseChanged * 2;
+        res.scenes[id] = { noiseChanged, audioChanged, pass };
+        if (!pass) res.failures.push(id);
+      } catch (e) { res.scenes[id] = { error: String((e && e.message) || e), pass: false }; res.failures.push(id); }
+    }
+    window.__vizDt = null;
+    setAudioState(false);
+    if (res.failures.length) R.ok = false;
     return res;
   });
   await step('modules', async () => {
